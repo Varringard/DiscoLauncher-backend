@@ -20,7 +20,7 @@
 
 ## Overview
 
-DiscoLauncher Backend is the server-side component of the **DiscoLauncher** ecosystem — an open source Minecraft launcher. It provides a REST API for the launcher client, an admin panel for server administrators, player authentication, skin hosting, and optional integration with **DiscoPanel** for automated server synchronization.
+DiscoLauncher Backend is the server-side component of the **DiscoLauncher** ecosystem — an open source Minecraft launcher. It provides a REST API for the launcher client, an admin panel for server administrators, player authentication, mod synchronization, and optional integration with **DiscoPanel** for automated server management.
 
 The backend is designed to run in a **Proxmox LXC container** (lightweight, low resource usage), but can also be deployed manually on any Linux or Windows machine.
 
@@ -32,7 +32,6 @@ The backend is designed to run in a **Proxmox LXC container** (lightweight, low 
 - 🖥️ **Admin Panel API** — Manage servers, mods, settings from a secure admin interface
 - 🗂️ **Server Management** — Multiple Minecraft servers with per-server mod lists
 - 📦 **Mod Sync** — Upload and manage client-side mods per server
-- 🎭 **Skin Hosting** — Serve player skins directly from the backend
 - 🔗 **DiscoPanel Integration** — Auto-sync servers and configurations from DiscoPanel
 - 🚀 **One-command Proxmox Install** — Automated LXC container setup script
 - 🪶 **Lightweight** — Runs comfortably on 512 MB RAM, 4 GB disk
@@ -83,7 +82,6 @@ The admin panel runs on port **5000** by default. It exposes a JSON API consumed
 | **Public Host** | Set the public IP/domain for each server |
 | **DiscoPanel Sync** | Connect to DiscoPanel and toggle auto-sync |
 | **Player Accounts** | View registered players |
-| **Skin Management** | Upload and serve player skins |
 | **Config** | Update JWT secret, admin credentials, ports |
 
 ### Default Credentials
@@ -110,7 +108,6 @@ The admin panel runs on port **5000** by default. It exposes a JSON API consumed
 | `GET` | `/api/servers/:id/mods` | List mods for a server |
 | `POST` | `/api/auth/login` | Player login |
 | `POST` | `/api/auth/register` | Player registration |
-| `GET` | `/skins/:username` | Fetch player skin |
 
 ### Admin API (port 5000)
 
@@ -194,7 +191,7 @@ DiscoLauncher-backend/
 │   └── MANUAL_INSTALL.md  # Manual install (Ubuntu, Windows, PM2)
 └── data/                   # Runtime data (gitignored)
     ├── discolauncher.db    # SQLite database
-    └── uploads/            # Uploaded mods and skins
+    └── uploads/            # Uploaded client mods
 ```
 
 ---

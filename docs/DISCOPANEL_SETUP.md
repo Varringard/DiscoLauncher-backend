@@ -173,4 +173,4 @@ curl -X POST http://<host>:5000/api/admin/servers/1/upload-mod \
   -F "mod=@./sodium-0.5.8.jar"
 ```
 
-All other features (player auth, skin hosting, mod sync to clients) work exactly the same whether or not DiscoPanel is configured.
+All other features (player auth, mod sync to clients, server status) work exactly the same whether or not DiscoPanel is configured.

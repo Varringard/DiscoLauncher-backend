@@ -24,11 +24,9 @@ const ADMIN_PASS = process.env.ADMIN_PASS || 'changeme';
 // Paths
 const DATA_DIR = path.join(__dirname, 'data');
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
-const SKINS_DIR = path.join(UPLOADS_DIR, 'skins');
-const CAPES_DIR = path.join(UPLOADS_DIR, 'capes');
 const SERVERS_DIR = path.join(DATA_DIR, 'servers');
 
-[DATA_DIR, UPLOADS_DIR, SKINS_DIR, CAPES_DIR, SERVERS_DIR].forEach(dir => {
+[DATA_DIR, UPLOADS_DIR, SERVERS_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
@@ -42,9 +40,6 @@ db.exec(`
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     uuid TEXT UNIQUE NOT NULL,
-    skin_url TEXT,
-    cape_url TEXT,
-    model TEXT DEFAULT 'classic',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -139,16 +134,6 @@ function authenticatePlayerToken(req, res, next) {
     next();
   });
 }
-
-// Multer for skin uploads
-const skinStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, SKINS_DIR),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.png';
-    cb(null, `${req.user ? req.user.uuid : 'temp_' + Date.now()}${ext}`);
-  }
-});
-const skinUpload = multer({ storage: skinStorage, limits: { fileSize: 2 * 1024 * 1024 } });
 
 // Multer for client mods uploads
 const modStorage = multer.diskStorage({
@@ -433,11 +418,11 @@ launcherApp.post('/api/auth/register', async (req, res) => {
     const uuid = crypto.createHash('md5').update(`OfflinePlayer:${username}`).digest('hex');
 
     const result = db.prepare(`
-      INSERT INTO users (username, password_hash, uuid, skin_url)
-      VALUES (?, ?, ?, ?)
-    `).run(username, hash, uuid, `/api/skins/${username}`);
+      INSERT INTO users (username, password_hash, uuid)
+      VALUES (?, ?, ?)
+    `).run(username, hash, uuid);
 
-    const user = { id: result.lastInsertRowid, username, uuid, skinUrl: `/api/skins/${username}` };
+    const user = { id: result.lastInsertRowid, username, uuid };
     const token = jwt.sign(user, JWT_SECRET, { expiresIn: '30d' });
 
     res.json({ success: true, user, token });
@@ -460,9 +445,7 @@ launcherApp.post('/api/auth/login', async (req, res) => {
     const profile = {
       id: user.id,
       username: user.username,
-      uuid: user.uuid,
-      skinUrl: user.skin_url || `/api/skins/${user.username}`,
-      model: user.model || 'classic'
+      uuid: user.uuid
     };
 
     const token = jwt.sign(profile, JWT_SECRET, { expiresIn: '30d' });
@@ -474,43 +457,6 @@ launcherApp.post('/api/auth/login', async (req, res) => {
 
 launcherApp.get('/api/auth/verify', authenticatePlayerToken, (req, res) => {
   res.json({ valid: true, user: req.user });
-});
-
-// Skins Routes
-launcherApp.post('/api/skins/upload', authenticatePlayerToken, skinUpload.single('skin'), (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
-    const { model } = req.body;
-    const skinRelUrl = `/uploads/skins/${path.basename(req.file.path)}`;
-
-    db.prepare('UPDATE users SET skin_url = ?, model = ? WHERE id = ?')
-      .run(skinRelUrl, model === 'slim' ? 'slim' : 'classic', req.user.id);
-
-    res.json({ success: true, skinUrl: skinRelUrl, model: model || 'classic' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-launcherApp.get('/api/skins/:username', async (req, res) => {
-  const username = req.params.username;
-  const user = db.prepare('SELECT * FROM users WHERE lower(username) = lower(?)').get(username);
-
-  if (user && user.skin_url && user.skin_url.startsWith('/uploads/')) {
-    const filePath = path.join(__dirname, user.skin_url);
-    if (fs.existsSync(filePath)) {
-      res.setHeader('Content-Type', 'image/png');
-      return fs.createReadStream(filePath).pipe(res);
-    }
-  }
-
-  const elyUrl = `https://skin.ely.by/skins/${encodeURIComponent(username)}.png`;
-  try {
-    const headRes = await fetch(elyUrl, { method: 'HEAD' });
-    if (headRes.ok) return res.redirect(elyUrl);
-  } catch (e) {}
-
-  return res.redirect(`https://minotar.net/skin/${encodeURIComponent(username)}`);
 });
 
 // Servers & Manifest Routes
@@ -567,34 +513,6 @@ launcherApp.get('/api/servers/:id/manifest', (req, res) => {
 
   const files = scanDir(serverDir);
   res.json({ serverId, timestamp: Date.now(), files });
-});
-
-// Yggdrasil Profile / Skin Routes
-launcherApp.get('/api/yggdrasil', (req, res) => {
-  res.json({
-    meta: { serverName: 'ExodusWorld Auth', implementationName: 'exodus-backend', implementationVersion: '1.0.0' },
-    skinDomains: ['192.168.10.123', '192.168.10.148', 'ely.by', 'mojang.com']
-  });
-});
-
-launcherApp.get('/api/yggdrasil/sessionserver/session/minecraft/profile/:uuid', (req, res) => {
-  const { uuid } = req.params;
-  const user = db.prepare('SELECT * FROM users WHERE uuid = ?').get(uuid);
-  if (!user) return res.status(204).send();
-
-  const skinUrl = user.skin_url ? `http://192.168.10.123:${LAUNCHER_PORT}${user.skin_url}` : `https://skin.ely.by/skins/${user.username}.png`;
-  const texturesObj = {
-    timestamp: Date.now(),
-    profileId: user.uuid,
-    profileName: user.username,
-    textures: { SKIN: { url: skinUrl, metadata: { model: user.model || 'classic' } } }
-  };
-
-  res.json({
-    id: user.uuid,
-    name: user.username,
-    properties: [{ name: 'textures', value: Buffer.from(JSON.stringify(texturesObj)).toString('base64') }]
-  });
 });
 
 // =========================================================================

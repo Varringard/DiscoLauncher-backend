@@ -199,46 +199,6 @@ Register a new player account.
 
 ---
 
-### Skins
-
----
-
-#### `GET /skins/:username`
-
-Fetch the skin image for a player by username.
-
-**Auth required:** No
-
-**Parameters:**
-- `username` — Player username (case-insensitive)
-
-**Response `200 OK`:** PNG image (`Content-Type: image/png`)
-
-**Response `404 Not Found`:** Returns the default Steve skin PNG
-
----
-
-#### `POST /api/player/skin`
-
-Upload a custom skin for the authenticated player.
-
-**Auth required:** Yes (player token)
-
-**Request:** `multipart/form-data`
-- `skin` — PNG file, max 64×64 pixels
-
-**Response `200 OK`:**
-```json
-{ "message": "Skin updated successfully" }
-```
-
-**Response `400 Bad Request`:**
-```json
-{ "error": "Invalid image dimensions. Must be 64x64." }
-```
-
----
-
 ## Admin API (Port 5000)
 
 All admin endpoints require admin authentication.

@@ -279,9 +279,8 @@ By default, runtime data is stored in `./data/` (relative to the repository root
 data/
 ├── discolauncher.db    # SQLite database (players, servers, mods)
 └── uploads/
-    ├── mods/           # Uploaded mod JAR files (per server)
-    │   └── 1/          # Server ID subdirectory
-    └── skins/          # Player skin PNG files
+    └── mods/           # Uploaded mod JAR files (per server)
+        └── 1/          # Server ID subdirectory
 ```
 
 To use a custom data directory, set `DATA_DIR` in `.env`:
