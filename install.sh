@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # DiscoLauncher Backend — Proxmox LXC Installer
-# https://github.com/varrimain/DiscoLauncher-backend
+# https://github.com/Varringard/DiscoLauncher-backend
 # =============================================================================
 set -euo pipefail
 
@@ -84,7 +84,7 @@ success 'Node.js installed'
 # Clone repository
 info 'Cloning DiscoLauncher-backend...'
 pct exec ${CT_ID} -- bash -c '
-  git clone https://github.com/varrimain/DiscoLauncher-backend.git /opt/discolauncher-backend
+  git clone https://github.com/Varringard/DiscoLauncher-backend.git /opt/discolauncher-backend
   cd /opt/discolauncher-backend
   npm install --omit=dev
 '

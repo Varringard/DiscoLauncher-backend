@@ -33,7 +33,7 @@ npm --version
 ### Step 2: Clone the Repository
 
 ```bash
-sudo git clone https://github.com/varrimain/DiscoLauncher-backend.git /opt/discolauncher-backend
+sudo git clone https://github.com/Varringard/DiscoLauncher-backend.git /opt/discolauncher-backend
 cd /opt/discolauncher-backend
 ```
 
@@ -184,7 +184,7 @@ npm --version
 ### Step 2: Clone the Repository
 
 ```powershell
-git clone https://github.com/varrimain/DiscoLauncher-backend.git C:\discolauncher-backend
+git clone https://github.com/Varringard/DiscoLauncher-backend.git C:\discolauncher-backend
 cd C:\discolauncher-backend
 ```
 

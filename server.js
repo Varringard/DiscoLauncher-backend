@@ -921,7 +921,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                 </div>
               </div>
               <div class="flex items-center gap-2 w-full sm:w-auto">
-                <input type="text" id="hostInput_${s.id}" value="${s.publicHost || ''}" placeholder="например: mc.varrimain.site" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-cyan-300 font-mono focus:border-indigo-500 focus:outline-none w-full sm:w-56">
+                <input type="text" id="hostInput_${s.id}" value="${s.publicHost || ''}" placeholder="например: mc.Varringard.site" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-cyan-300 font-mono focus:border-indigo-500 focus:outline-none w-full sm:w-56">
                 <button onclick="savePublicHost('${s.id}')" class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shadow-md shadow-indigo-600/20 shrink-0">
                   Сохранить
                 </button>

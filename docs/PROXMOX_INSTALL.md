@@ -18,14 +18,14 @@ This guide covers everything you need to know to install and manage DiscoLaunche
 Open the **Proxmox VE host shell** (not inside a VM or container) and run:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/varrimain/DiscoLauncher-backend/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/Varringard/DiscoLauncher-backend/main/install.sh)
 ```
 
 Or, if you prefer to review the script first:
 
 ```bash
 # Download
-curl -fsSL https://raw.githubusercontent.com/varrimain/DiscoLauncher-backend/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/Varringard/DiscoLauncher-backend/main/install.sh -o install.sh
 
 # Review
 cat install.sh
@@ -90,7 +90,7 @@ apt-get install -y nodejs
 ### Step 6: Clone Repository & Install Dependencies
 
 ```bash
-git clone https://github.com/varrimain/DiscoLauncher-backend.git /opt/discolauncher-backend
+git clone https://github.com/Varringard/DiscoLauncher-backend.git /opt/discolauncher-backend
 cd /opt/discolauncher-backend
 npm install --omit=dev
 ```
@@ -229,7 +229,7 @@ server {
 ### Using the update script (from Proxmox host)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/varrimain/DiscoLauncher-backend/main/update.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/Varringard/DiscoLauncher-backend/main/update.sh)
 # Prompts for container ID, then pulls latest and restarts
 ```
 

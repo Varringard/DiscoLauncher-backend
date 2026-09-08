@@ -45,7 +45,7 @@ The backend is designed to run in a **Proxmox LXC container** (lightweight, low 
 Run this on your **Proxmox VE host shell**:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/varrimain/DiscoLauncher-backend/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/Varringard/DiscoLauncher-backend/main/install.sh)
 ```
 
 The script will:
@@ -134,7 +134,7 @@ Full API documentation: [docs/API.md](docs/API.md)
 Run on your Proxmox host:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/varrimain/DiscoLauncher-backend/main/update.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/Varringard/DiscoLauncher-backend/main/update.sh)
 # Or if you've cloned this repo:
 bash update.sh [CONTAINER_ID]
 ```
