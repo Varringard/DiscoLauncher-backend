@@ -860,61 +860,23 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       </div>
     </header>
 
-    <!-- Launcher API Connection Card -->
-    <div class="bg-gradient-to-r from-cyan-950/50 via-[#121826] to-indigo-950/40 border border-cyan-500/30 rounded-3xl p-6 mb-8 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
-      <div class="flex items-center gap-4">
-        <div class="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-xl text-cyan-400 shrink-0 shadow-lg shadow-cyan-500/20">
-          <i class="fa-solid fa-satellite-dish"></i>
-        </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <h2 class="text-sm font-bold text-white uppercase tracking-wider">Адрес API для лаунчера игроков</h2>
-            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">Порт ${LAUNCHER_PORT}</span>
-          </div>
-          <p class="text-xs text-slate-400 mt-1">
-            Укажите эту ссылку в лаунчере: вкладка <b class="text-slate-200">«Настройки»</b> → поле <b class="text-slate-200">«Адрес сервера»</b>
-          </p>
-        </div>
-      </div>
-      <div class="flex items-center gap-2 w-full md:w-auto">
-        <div class="flex items-center bg-slate-900/90 border border-cyan-500/40 rounded-2xl px-4 py-2.5 font-mono text-sm text-cyan-300 select-all shadow-inner">
-          <span id="launcherApiUrl">${launcherUrl}</span>
-        </div>
-        <button onclick="copyLauncherUrl()" id="copyBtn" class="px-4 py-2.5 rounded-2xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-cyan-600/30 shrink-0">
-          <i class="fa-solid fa-copy"></i>
-          <span id="copyBtnText">Копировать</span>
-        </button>
-      </div>
+    <!-- Navigation Tabs -->
+    <div class="flex items-center gap-3 mb-8 border-b border-indigo-950/80 pb-4">
+      <button onclick="switchTab('servers')" id="tabBtn_servers" class="px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 cursor-pointer">
+        <i class="fa-solid fa-server"></i>
+        <span>Серверы</span>
+        <span class="px-2 py-0.5 rounded-lg bg-indigo-500/30 text-white text-[10px] font-mono">${servers.length}</span>
+      </button>
+      <button onclick="switchTab('settings')" id="tabBtn_settings" class="px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 cursor-pointer">
+        <i class="fa-solid fa-gear"></i>
+        <span>Настройки</span>
+      </button>
     </div>
 
-    <!-- DiscoPanel API Settings Box -->
-    <div class="bg-[#121826] border border-indigo-950 rounded-3xl p-6 mb-8 shadow-xl">
-      <div class="mb-4">
-        <h2 class="text-base font-bold text-white flex items-center gap-2">
-          <i class="fa-solid fa-link text-indigo-400"></i> Привязка DiscoPanel API
-        </h2>
-        <p class="text-xs text-slate-400 mt-1">Лаунчер использует API для автоматического обнаружения серверов и загрузки модов</p>
-      </div>
-
-      <form id="apiConfigForm" onsubmit="saveApiConfig(event)" class="grid grid-cols-1 md:grid-cols-12 gap-4">
-        <div class="md:col-span-5">
-          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Адрес DiscoPanel</label>
-          <input type="text" id="dpUrlInput" value="${dpUrl}" class="w-full bg-slate-900/80 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
-        </div>
-        <div class="md:col-span-5">
-          <label class="text-[11px] font-semibold text-slate-400 block mb-1">API Токен (с префиксом dp_)</label>
-          <input type="password" id="dpTokenInput" value="${dpToken}" placeholder="dp_..." class="w-full bg-slate-900/80 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
-        </div>
-        <div class="md:col-span-2 flex items-end">
-          <button type="submit" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 transition-all">
-            Сохранить
-          </button>
-        </div>
-      </form>
-    </div>
-
-    <!-- Servers in Launcher -->
-    <div class="bg-[#121826] border border-indigo-950 rounded-3xl p-6 mb-8">
+    <!-- TAB 1: SERVERS -->
+    <div id="tab_servers">
+      <!-- Servers in Launcher -->
+      <div class="bg-[#121826] border border-indigo-950 rounded-3xl p-6 mb-8">
       <div class="flex items-center justify-between mb-6">
         <div>
           <h2 class="text-lg font-bold text-white flex items-center gap-2">
@@ -1141,6 +1103,82 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         `).join('')}
       </div>
     </div>
+    </div> <!-- /tab_servers -->
+
+    <!-- TAB 2: SETTINGS -->
+    <div id="tab_settings" class="hidden space-y-8">
+      <!-- Launcher API Connection Card -->
+      <div class="bg-gradient-to-r from-cyan-950/50 via-[#121826] to-indigo-950/40 border border-cyan-500/30 rounded-3xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-xl text-cyan-400 shrink-0 shadow-lg shadow-cyan-500/20">
+            <i class="fa-solid fa-satellite-dish"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="text-sm font-bold text-white uppercase tracking-wider">Адрес API для лаунчера игроков</h2>
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">Порт ${LAUNCHER_PORT}</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">
+              Укажите эту ссылку в лаунчере: вкладка <b class="text-slate-200">«Настройки»</b> → поле <b class="text-slate-200">«Адрес сервера»</b>
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 w-full md:w-auto">
+          <div class="flex items-center bg-slate-900/90 border border-cyan-500/40 rounded-2xl px-4 py-2.5 font-mono text-sm text-cyan-300 select-all shadow-inner">
+            <span id="launcherApiUrl">${launcherUrl}</span>
+          </div>
+          <button onclick="copyLauncherUrl()" id="copyBtn" class="px-4 py-2.5 rounded-2xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-cyan-600/30 shrink-0">
+            <i class="fa-solid fa-copy"></i>
+            <span id="copyBtnText">Копировать</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- DiscoPanel API Settings Box -->
+      <div class="bg-[#121826] border border-indigo-950 rounded-3xl p-6 shadow-xl">
+        <div class="mb-4">
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <i class="fa-solid fa-link text-indigo-400"></i> Привязка DiscoPanel API
+          </h2>
+          <p class="text-xs text-slate-400 mt-1">Лаунчер использует API для автоматического обнаружения серверов и загрузки модов</p>
+        </div>
+
+        <form id="apiConfigForm" onsubmit="saveApiConfig(event)" class="grid grid-cols-1 md:grid-cols-12 gap-4">
+          <div class="md:col-span-5">
+            <label class="text-[11px] font-semibold text-slate-400 block mb-1">Адрес DiscoPanel</label>
+            <input type="text" id="dpUrlInput" value="${dpUrl}" class="w-full bg-slate-900/80 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
+          </div>
+          <div class="md:col-span-5">
+            <label class="text-[11px] font-semibold text-slate-400 block mb-1">API Токен (с префиксом dp_)</label>
+            <input type="password" id="dpTokenInput" value="${dpToken}" placeholder="dp_..." class="w-full bg-slate-900/80 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
+          </div>
+          <div class="md:col-span-2 flex items-end">
+            <button type="submit" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 transition-all">
+              Сохранить
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Admin Security Settings Card -->
+      <div class="bg-[#121826] border border-indigo-950 rounded-3xl p-6 shadow-xl">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div class="flex items-center gap-4">
+            <div class="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-xl text-indigo-400 shrink-0 shadow-lg shadow-indigo-600/20">
+              <i class="fa-solid fa-shield-halved"></i>
+            </div>
+            <div>
+              <h2 class="text-sm font-bold text-white uppercase tracking-wider">Безопасность администратора</h2>
+              <p class="text-xs text-slate-400 mt-1">Текущий логин: <b class="text-indigo-300 font-mono">${currentAdminUser}</b></p>
+            </div>
+          </div>
+          <button onclick="openCredentialsModal()" class="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-indigo-600/30">
+            <i class="fa-solid fa-key"></i>
+            <span>Сменить логин и пароль</span>
+          </button>
+        </div>
+      </div>
+    </div> <!-- /tab_settings -->
   </div>
 
   <script>
@@ -1450,6 +1488,37 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         btn.textContent = 'Сохранить';
       }
     }
+
+    function switchTab(tab) {
+      const isServers = tab === 'servers';
+      const tabServers = document.getElementById('tab_servers');
+      const tabSettings = document.getElementById('tab_settings');
+      if (tabServers && tabSettings) {
+        tabServers.classList.toggle('hidden', !isServers);
+        tabSettings.classList.toggle('hidden', isServers);
+      }
+
+      const btnServers = document.getElementById('tabBtn_servers');
+      const btnSettings = document.getElementById('tabBtn_settings');
+      if (btnServers && btnSettings) {
+        if (isServers) {
+          btnServers.className = "px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 cursor-pointer";
+          btnSettings.className = "px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 cursor-pointer";
+        } else {
+          btnSettings.className = "px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 cursor-pointer";
+          btnServers.className = "px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 cursor-pointer";
+        }
+      }
+
+      try { localStorage.setItem('disco_admin_tab', tab); } catch(e) {}
+    }
+
+    try {
+      const savedTab = localStorage.getItem('disco_admin_tab');
+      if (savedTab === 'settings') {
+        switchTab('settings');
+      }
+    } catch(e) {}
   </script>
 
   <!-- Modal: Change Admin Credentials -->
