@@ -83,6 +83,14 @@ if (!getSetting('discopanel_token')) {
   setSetting('discopanel_token', '');
 }
 
+// Admin credentials helper (supports dynamic update via settings table)
+function getAdminCredentials() {
+  const username = getSetting('admin_username', ADMIN_USER);
+  const passwordHash = getSetting('admin_password_hash', '');
+  const plainPassword = getSetting('admin_password', ADMIN_PASS);
+  return { username, passwordHash, plainPassword };
+}
+
 // Cookie parser helper
 function parseCookies(req) {
   const list = {};
@@ -682,12 +690,64 @@ adminApp.get('/login', (req, res) => {
 // Admin Auth APIs
 adminApp.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  if (username === ADMIN_USER && password === ADMIN_PASS) {
-    const token = jwt.sign({ role: 'admin', user: ADMIN_USER }, JWT_SECRET, { expiresIn: '7d' });
+  const adminCreds = getAdminCredentials();
+
+  let isValid = false;
+  if (username === adminCreds.username) {
+    if (adminCreds.passwordHash) {
+      try {
+        isValid = bcrypt.compareSync(password, adminCreds.passwordHash);
+      } catch (e) {
+        isValid = false;
+      }
+    } else {
+      isValid = (password === adminCreds.plainPassword);
+    }
+  }
+
+  if (isValid) {
+    const token = jwt.sign({ role: 'admin', user: adminCreds.username }, JWT_SECRET, { expiresIn: '7d' });
     res.setHeader('Set-Cookie', `admin_token=${token}; HttpOnly; Path=/; Max-Age=604800; SameSite=Lax`);
     return res.json({ success: true, token });
   }
   return res.status(401).json({ success: false, error: 'Неверный логин или пароль' });
+});
+
+adminApp.post('/api/admin/change-credentials', requireAdminAuth, (req, res) => {
+  const { currentPassword, newUsername, newPassword } = req.body;
+  if (!newUsername || !newUsername.trim()) {
+    return res.status(400).json({ success: false, error: 'Логин не может быть пустым' });
+  }
+  if (!newPassword || newPassword.length < 4) {
+    return res.status(400).json({ success: false, error: 'Новый пароль должен быть не менее 4 символов' });
+  }
+
+  const adminCreds = getAdminCredentials();
+  let isCurrentValid = false;
+  if (adminCreds.passwordHash) {
+    try {
+      isCurrentValid = bcrypt.compareSync(currentPassword || '', adminCreds.passwordHash);
+    } catch(e) {
+      isCurrentValid = false;
+    }
+  } else {
+    isCurrentValid = (currentPassword === adminCreds.plainPassword);
+  }
+
+  if (!isCurrentValid) {
+    return res.status(400).json({ success: false, error: 'Текущий пароль указан неверно' });
+  }
+
+  const cleanUser = newUsername.trim();
+  const newHash = bcrypt.hashSync(newPassword, 10);
+  setSetting('admin_username', cleanUser);
+  setSetting('admin_password_hash', newHash);
+  setSetting('admin_password', ''); // clear plain
+
+  const token = jwt.sign({ role: 'admin', user: cleanUser }, JWT_SECRET, { expiresIn: '7d' });
+  res.setHeader('Set-Cookie', `admin_token=${token}; HttpOnly; Path=/; Max-Age=604800; SameSite=Lax`);
+
+  return res.json({ success: true, message: 'Данные администратора успешно изменены' });
 });
 
 adminApp.post('/api/logout', (req, res) => {
@@ -702,6 +762,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
   const dpUrl = getSetting('discopanel_url', 'http://192.168.10.127:8080');
   const dpToken = getSetting('discopanel_token', '');
   const launcherUrl = 'http://' + (req.hostname || '192.168.10.123') + ':' + LAUNCHER_PORT;
+  const currentAdminUser = getAdminCredentials().username;
 
   servers.forEach(s => {
     s.maxOnline = s.max_online || 100;
@@ -785,16 +846,14 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         </div>
       </div>
       <div class="flex items-center gap-3">
-        <div class="px-3 py-2 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-300 flex items-center gap-2">
+        <button onclick="openCredentialsModal()" title="Сменить логин или пароль" class="px-3.5 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 flex items-center gap-2 transition-all cursor-pointer">
           <i class="fa-solid fa-user-shield text-indigo-400"></i>
-          <span class="font-bold font-mono text-white">varringard</span>
-        </div>
-        <button onclick="triggerSyncNow()" class="px-4 py-2 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/50 text-xs font-bold text-indigo-200 flex items-center gap-2 transition-all">
-          <i class="fa-solid fa-arrows-rotate"></i> Синхронизировать
+          <span class="font-bold font-mono text-white">${currentAdminUser}</span>
+          <i class="fa-solid fa-pen-to-square text-[10px] text-slate-400 ml-1"></i>
         </button>
-        <a href="${dpUrl}" target="_blank" class="px-4 py-2 rounded-xl bg-purple-950/60 hover:bg-purple-900/60 border border-purple-500/40 text-xs font-bold text-purple-300 flex items-center gap-2 transition-all">
-          <i class="fa-solid fa-sliders"></i> DiscoPanel
-        </a>
+        <button onclick="openCredentialsModal()" class="px-3.5 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/40 text-xs font-bold text-indigo-300 flex items-center gap-1.5 transition-all">
+          <i class="fa-solid fa-key"></i> Сменить пароль
+        </button>
         <button onclick="logoutAdmin()" title="Выйти из панели" class="px-3 py-2 rounded-xl bg-red-950/50 hover:bg-red-900/60 border border-red-800/50 text-xs font-bold text-red-300 flex items-center gap-1.5 transition-all">
           <i class="fa-solid fa-right-from-bracket"></i> Выйти
         </button>
@@ -1320,7 +1379,127 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         document.getElementById('launcherApiUrl').textContent = 'http://' + window.location.hostname + ':${LAUNCHER_PORT}';
       }
     } catch(e) {}
+
+    function openCredentialsModal() {
+      document.getElementById('credError').classList.add('hidden');
+      document.getElementById('credSuccess').classList.add('hidden');
+      document.getElementById('currentPassInput').value = '';
+      document.getElementById('newPassInput').value = '';
+      document.getElementById('confirmPassInput').value = '';
+      document.getElementById('credentialsModal').classList.remove('hidden');
+    }
+
+    function closeCredentialsModal() {
+      document.getElementById('credentialsModal').classList.add('hidden');
+    }
+
+    async function saveCredentials(e) {
+      e.preventDefault();
+      const currentPassword = document.getElementById('currentPassInput').value;
+      const newUsername = document.getElementById('newUsernameInput').value.trim();
+      const newPassword = document.getElementById('newPassInput').value;
+      const confirmPassword = document.getElementById('confirmPassInput').value;
+
+      const errBox = document.getElementById('credError');
+      const succBox = document.getElementById('credSuccess');
+      errBox.classList.add('hidden');
+      succBox.classList.add('hidden');
+
+      if (!newUsername) {
+        errBox.textContent = 'Логин не может быть пустым!';
+        errBox.classList.remove('hidden');
+        return;
+      }
+
+      if (newPassword !== confirmPassword) {
+        errBox.textContent = 'Новые пароли не совпадают!';
+        errBox.classList.remove('hidden');
+        return;
+      }
+
+      if (newPassword.length < 4) {
+        errBox.textContent = 'Пароль должен быть не менее 4 символов!';
+        errBox.classList.remove('hidden');
+        return;
+      }
+
+      const btn = document.getElementById('saveCredBtn');
+      btn.disabled = true;
+      btn.textContent = 'Сохранение...';
+
+      try {
+        const res = await fetch('/api/admin/change-credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentPassword, newUsername, newPassword })
+        });
+        const d = await res.json();
+        if (d.success) {
+          succBox.textContent = 'Логин и пароль успешно изменены! Перезагрузка...';
+          succBox.classList.remove('hidden');
+          setTimeout(() => { window.location.reload(); }, 1200);
+        } else {
+          errBox.textContent = d.error || 'Ошибка при сохранении';
+          errBox.classList.remove('hidden');
+        }
+      } catch (err) {
+        errBox.textContent = 'Ошибка сети: ' + err.message;
+        errBox.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Сохранить';
+      }
+    }
   </script>
+
+  <!-- Modal: Change Admin Credentials -->
+  <div id="credentialsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm hidden">
+    <div class="bg-[#121826] border border-indigo-900/80 rounded-3xl p-6 max-w-md w-full mx-4 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-2 text-white font-bold text-base">
+          <i class="fa-solid fa-shield-halved text-indigo-400"></i>
+          <span>Смена данных администратора</span>
+        </div>
+        <button type="button" onclick="closeCredentialsModal()" class="text-slate-400 hover:text-white text-sm p-1">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <form onsubmit="saveCredentials(event)" class="space-y-4">
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Текущий пароль</label>
+          <input type="password" id="currentPassInput" required placeholder="Введите текущий пароль" class="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <div class="pt-2 border-t border-slate-800/60">
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Новый логин</label>
+          <input type="text" id="newUsernameInput" value="${currentAdminUser}" required placeholder="Логин администратора" class="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
+        </div>
+
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Новый пароль</label>
+          <input type="password" id="newPassInput" required placeholder="Минимум 4 символа" class="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Повторите новый пароль</label>
+          <input type="password" id="confirmPassInput" required placeholder="Повторите пароль" class="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <div id="credError" class="hidden p-3 rounded-xl bg-red-950/50 border border-red-800/50 text-xs text-red-300"></div>
+        <div id="credSuccess" class="hidden p-3 rounded-xl bg-emerald-950/50 border border-emerald-800/50 text-xs text-emerald-300"></div>
+
+        <div class="flex items-center justify-end gap-3 pt-2">
+          <button type="button" onclick="closeCredentialsModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 transition-all">
+            Отмена
+          </button>
+          <button type="submit" id="saveCredBtn" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shadow-lg shadow-indigo-600/30">
+            Сохранить
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
 </body>
 </html>`;
 
