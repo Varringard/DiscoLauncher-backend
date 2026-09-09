@@ -969,6 +969,9 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
             </div>
           </div>
           <div class="flex items-center gap-1 shrink-0">
+            <button onclick="openCredentialsModal()" title="Change Username & Password" class="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors">
+              <i class="fa-solid fa-key text-xs"></i>
+            </button>
             <button onclick="logoutAdmin()" title="Log Out" class="p-1.5 rounded-lg hover:bg-red-950/40 text-slate-400 hover:text-red-400 transition-colors">
               <i class="fa-solid fa-right-from-bracket text-xs"></i>
             </button>
@@ -1423,6 +1426,55 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
 
   </main>
 
+  <!-- ================= MODAL: CHANGE ADMIN CREDENTIALS ================= -->
+  <div id="credentialsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden">
+    <div class="bg-[#11131a] border border-[#222738] rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-2 text-white font-bold text-sm">
+          <i class="fa-solid fa-shield-halved text-emerald-400"></i>
+          <span>Change Admin Credentials</span>
+        </div>
+        <button type="button" onclick="closeCredentialsModal()" class="text-slate-400 hover:text-white text-sm p-1">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <form onsubmit="saveCredentials(event)" class="space-y-3.5">
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Current Password</label>
+          <input type="password" id="currentPassInput" required placeholder="Enter current password" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <div class="pt-2 border-t border-slate-800/60">
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">New Username</label>
+          <input type="text" id="newUsernameInput" value="${currentAdminUser}" required placeholder="Admin username" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
+        </div>
+
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">New Password</label>
+          <input type="password" id="newPassInput" required placeholder="Minimum 4 characters" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Confirm New Password</label>
+          <input type="password" id="confirmPassInput" required placeholder="Repeat new password" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <div id="credError" class="hidden p-2.5 rounded-xl bg-red-950/50 border border-red-800/50 text-xs text-red-300"></div>
+        <div id="credSuccess" class="hidden p-2.5 rounded-xl bg-emerald-950/50 border border-emerald-800/50 text-xs text-emerald-300"></div>
+
+        <div class="flex items-center justify-end gap-2.5 pt-2">
+          <button type="button" onclick="closeCredentialsModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 transition-all">
+            Cancel
+          </button>
+          <button type="submit" id="saveCredBtn" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition-all shadow-md">
+            Save
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- ================= SCRIPTS ================= -->
   <script>
     (function() {
@@ -1750,6 +1802,75 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         if (d.success) { window.location.reload(); }
         else { alert('Error: ' + (d.error || 'Error')); }
       } catch (err) { alert('Error: ' + err.message); }
+    }
+
+    function openCredentialsModal() {
+      document.getElementById('credError').classList.add('hidden');
+      document.getElementById('credSuccess').classList.add('hidden');
+      document.getElementById('currentPassInput').value = '';
+      document.getElementById('newPassInput').value = '';
+      document.getElementById('confirmPassInput').value = '';
+      document.getElementById('credentialsModal').classList.remove('hidden');
+    }
+
+    function closeCredentialsModal() {
+      document.getElementById('credentialsModal').classList.add('hidden');
+    }
+
+    async function saveCredentials(e) {
+      e.preventDefault();
+      const currentPassword = document.getElementById('currentPassInput').value;
+      const newUsername = document.getElementById('newUsernameInput').value.trim();
+      const newPassword = document.getElementById('newPassInput').value;
+      const confirmPassword = document.getElementById('confirmPassInput').value;
+
+      const errBox = document.getElementById('credError');
+      const succBox = document.getElementById('credSuccess');
+      errBox.classList.add('hidden');
+      succBox.classList.add('hidden');
+
+      if (!newUsername) {
+        errBox.textContent = 'Username cannot be empty!';
+        errBox.classList.remove('hidden');
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        errBox.textContent = 'New passwords do not match!';
+        errBox.classList.remove('hidden');
+        return;
+      }
+      if (newPassword.length < 4) {
+        errBox.textContent = 'Password must be at least 4 characters!';
+        errBox.classList.remove('hidden');
+        return;
+      }
+
+      const btn = document.getElementById('saveCredBtn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+
+      try {
+        const res = await fetch('/api/admin/change-credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentPassword, newUsername, newPassword })
+        });
+        const d = await res.json();
+        if (d.success) {
+          succBox.textContent = 'Credentials updated successfully! Reloading...';
+          succBox.classList.remove('hidden');
+          setTimeout(() => window.location.reload(), 1200);
+        } else {
+          errBox.textContent = d.error || 'Failed to update credentials';
+          errBox.classList.remove('hidden');
+        }
+      } catch (err) {
+        errBox.textContent = 'Network error: ' + err.message;
+        errBox.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save';
+      }
     }
 
     try {
