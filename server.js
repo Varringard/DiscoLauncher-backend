@@ -817,317 +817,403 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
     });
   });
 
+  const totalRunning = servers.filter(s => s.status === 'online').length;
+  const totalStopped = servers.length - totalRunning;
+  const totalPlayersOnline = servers.reduce((acc, s) => acc + (s.online || 0), 0);
+  const totalModsCount = servers.reduce((acc, s) => acc + (s.totalMods || 0), 0);
+  const totalShadersCount = servers.reduce((acc, s) => acc + (s.shadersList?.length || 0), 0);
+  const totalPacksCount = servers.reduce((acc, s) => acc + (s.resourcepacksList?.length || 0), 0);
+  const adminInitials = (currentAdminUser || 'AD').substring(0, 2).toUpperCase();
+
   const html = `<!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" class="dark">
 <head>
   <meta charset="UTF-8">
-  <title>DiscoLauncher - Панель управления</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DiscoPanel - Серверы и Модпаки</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    body { background-color: #0b0f19; color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; }
+    body {
+      background-color: #0c0d12;
+      color: #e2e8f0;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+    font-mono { font-family: 'JetBrains Mono', monospace; }
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #08090d; }
+    ::-webkit-scrollbar-thumb { background: #1e2230; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #2e354a; }
   </style>
 </head>
-<body class="min-h-screen p-8">
-  <div class="max-w-6xl mx-auto">
-    <!-- Header -->
-    <header class="flex items-center justify-between pb-6 border-b border-indigo-950/80 mb-8">
-      <div class="flex items-center gap-4">
-        <div class="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-xl text-indigo-400 shadow-lg shadow-indigo-600/20">
-          <i class="fa-solid fa-gamepad"></i>
+<body class="h-screen flex overflow-hidden bg-[#0c0d12] text-slate-200">
+
+  <!-- ================= SIDEBAR ================= -->
+  <aside class="w-64 bg-[#08090d] border-r border-[#161822] flex flex-col justify-between shrink-0 select-none">
+    <div class="p-4 flex flex-col h-full overflow-y-auto">
+      
+      <!-- Brand Header -->
+      <div class="flex items-center gap-3 px-2 py-3 mb-6">
+        <div class="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-lg shadow-lg shadow-emerald-500/10">
+          <i class="fa-solid fa-cubes-stacked"></i>
         </div>
         <div>
-          <div class="flex items-center gap-3">
-            <h1 class="text-2xl font-black tracking-wide text-white">DiscoLauncher</h1>
-            <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-xs font-mono border border-indigo-500/30">Админ-панель (порт ${ADMIN_PORT})</span>
-            <span class="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-xs font-mono border border-cyan-500/30">API лаунчера: :${LAUNCHER_PORT}</span>
+          <div class="flex items-center gap-1.5">
+            <span class="font-black text-white text-base tracking-tight">DiscoPanel</span>
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
           </div>
-          <p class="text-xs text-slate-400 mt-1">Автоматическая синхронизация серверов и модов через DiscoPanel API</p>
-        </div>
-      </div>
-      <div class="flex items-center gap-3">
-        <button onclick="openCredentialsModal()" title="Сменить логин или пароль" class="px-3.5 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 flex items-center gap-2 transition-all cursor-pointer">
-          <i class="fa-solid fa-user-shield text-indigo-400"></i>
-          <span class="font-bold font-mono text-white">${currentAdminUser}</span>
-          <i class="fa-solid fa-pen-to-square text-[10px] text-slate-400 ml-1"></i>
-        </button>
-        <button onclick="openCredentialsModal()" class="px-3.5 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/40 text-xs font-bold text-indigo-300 flex items-center gap-1.5 transition-all">
-          <i class="fa-solid fa-key"></i> Сменить пароль
-        </button>
-        <button onclick="logoutAdmin()" title="Выйти из панели" class="px-3 py-2 rounded-xl bg-red-950/50 hover:bg-red-900/60 border border-red-800/50 text-xs font-bold text-red-300 flex items-center gap-1.5 transition-all">
-          <i class="fa-solid fa-right-from-bracket"></i> Выйти
-        </button>
-      </div>
-    </header>
-
-    <!-- Navigation Tabs -->
-    <div class="flex items-center gap-3 mb-8 border-b border-indigo-950/80 pb-4">
-      <button onclick="switchTab('servers')" id="tabBtn_servers" class="px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 cursor-pointer">
-        <i class="fa-solid fa-server"></i>
-        <span>Серверы</span>
-        <span class="px-2 py-0.5 rounded-lg bg-indigo-500/30 text-white text-[10px] font-mono">${servers.length}</span>
-      </button>
-      <button onclick="switchTab('settings')" id="tabBtn_settings" class="px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 cursor-pointer">
-        <i class="fa-solid fa-gear"></i>
-        <span>Настройки</span>
-      </button>
-    </div>
-
-    <!-- TAB 1: SERVERS -->
-    <div id="tab_servers">
-      <!-- Servers in Launcher -->
-      <div class="bg-[#121826] border border-indigo-950 rounded-3xl p-6 mb-8">
-      <div class="flex items-center justify-between mb-6">
-        <div>
-          <h2 class="text-lg font-bold text-white flex items-center gap-2">
-            <i class="fa-solid fa-server text-cyan-400"></i> Серверы в лаунчере (${servers.length})
-          </h2>
-          <p class="text-xs text-slate-400">Управление синхронизацией и загрузка клиентских модов для каждого сервера</p>
+          <span class="text-[10px] text-slate-500 font-mono">Launcher & Server Sync</span>
         </div>
       </div>
 
-      <div class="grid grid-cols-1 gap-6">
+      <!-- Navigation Section -->
+      <div class="space-y-1 mb-6">
+        <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">Navigation</div>
+        
+        <button onclick="switchNav('dashboard')" id="nav_dashboard" class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-[#12141c] transition-all">
+          <div class="flex items-center gap-3">
+            <i class="fa-solid fa-chart-pie w-4 text-center text-slate-400"></i>
+            <span>Dashboard</span>
+          </div>
+        </button>
+
+        <button onclick="switchNav('servers')" id="nav_servers" class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold text-white bg-[#151824] border border-[#222738] shadow-sm transition-all">
+          <div class="flex items-center gap-3">
+            <i class="fa-solid fa-server w-4 text-center text-emerald-400"></i>
+            <span>Servers</span>
+          </div>
+          <span class="px-2 py-0.5 rounded-md bg-[#1f2438] text-[10px] font-mono text-slate-300 font-bold">${servers.length}</span>
+        </button>
+
+        <button onclick="switchNav('settings')" id="nav_settings" class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-[#12141c] transition-all">
+          <div class="flex items-center gap-3">
+            <i class="fa-solid fa-gear w-4 text-center text-slate-400"></i>
+            <span>Settings</span>
+          </div>
+        </button>
+
+        <button onclick="switchNav('api')" id="nav_api" class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-[#12141c] transition-all">
+          <div class="flex items-center gap-3">
+            <i class="fa-solid fa-satellite-dish w-4 text-center text-slate-400"></i>
+            <span>API Launcher</span>
+          </div>
+          <span class="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 text-[9px] font-mono font-bold">:6500</span>
+        </button>
+      </div>
+
+      <!-- Quick Access Section -->
+      <div class="space-y-1 flex-1">
+        <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">Quick Access</div>
         ${servers.map(s => `
-          <div class="p-6 rounded-3xl bg-[#0e1422] border border-slate-800 space-y-5">
-            <!-- Server Header -->
-            <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
-              <div class="flex items-center gap-3">
-                <span class="w-3 h-3 rounded-full ${s.status === 'online' ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}"></span>
-                <div>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <span class="text-lg font-black text-white">${s.name}</span>
-                    <span class="px-2 py-0.5 rounded-lg bg-indigo-500/20 text-indigo-300 text-xs font-mono font-bold">${s.version} (${s.modloader})</span>
-                    <span class="px-2 py-0.5 rounded-lg bg-slate-800 text-slate-300 text-xs font-mono">${s.ip}:${s.port}</span>
-                    <span class="px-2 py-0.5 rounded-lg bg-slate-800 text-slate-300 text-xs font-mono"><b class="text-emerald-400 font-bold">${s.online || 0}</b> / ${s.maxOnline} слотов</span>
-                  </div>
-                  <p class="text-xs text-slate-400 mt-1">${s.description || ''}</p>
-                </div>
-              </div>
-            </div>
+          <button onclick="scrollToServer('${s.id}')" class="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-[#12141c] transition-all truncate">
+            <span class="w-2 h-2 rounded-full ${s.status === 'online' ? 'bg-emerald-400' : 'bg-red-400'} shrink-0"></span>
+            <span class="truncate text-left">${s.name}</span>
+          </button>
+        `).join('')}
+      </div>
 
-            <!-- Public Domain / IP for Minecraft -->
-            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-2xl bg-slate-900/60 border border-slate-800">
-              <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 text-xs shrink-0">
-                  <i class="fa-solid fa-globe"></i>
+      <!-- User Profile Box -->
+      <div class="pt-4 border-t border-[#161822] mt-4">
+        <div class="p-2.5 rounded-xl bg-[#0f1118] border border-[#1b1e2a] flex items-center justify-between gap-3">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <div class="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-xs text-white shrink-0">
+              ${adminInitials}
+            </div>
+            <div class="min-w-0">
+              <div class="text-xs font-bold text-white truncate">${currentAdminUser}</div>
+              <div class="text-[10px] text-slate-500">Administrator</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
+            <button onclick="openCredentialsModal()" title="Сменить логин или пароль" class="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors">
+              <i class="fa-solid fa-key text-xs"></i>
+            </button>
+            <button onclick="logoutAdmin()" title="Выйти" class="p-1.5 rounded-lg hover:bg-red-950/40 text-slate-400 hover:text-red-400 transition-colors">
+              <i class="fa-solid fa-right-from-bracket text-xs"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between px-2 pt-3 text-[10px] text-slate-600 font-mono">
+          <span>v1.2.3</span>
+          <span class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Proxmox LXC 107</span>
+        </div>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- ================= MAIN CONTENT ================= -->
+  <main class="flex-1 flex flex-col overflow-y-auto bg-[#0c0d12]">
+
+    <!-- ================= SECTION: SERVERS ================= -->
+    <div id="section_servers" class="p-8 max-w-6xl w-full mx-auto space-y-6">
+      
+      <!-- Top Title Bar -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#161822]">
+        <div class="flex items-center gap-3.5">
+          <div class="w-11 h-11 rounded-2xl bg-[#141620] border border-[#202434] flex items-center justify-center text-slate-200 text-lg shadow-sm">
+            <i class="fa-solid fa-server"></i>
+          </div>
+          <div>
+            <h1 class="text-xl font-black text-white tracking-tight">Servers</h1>
+            <p class="text-xs text-slate-400">Manage and monitor your Minecraft server instances</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button onclick="triggerSyncNow()" class="px-4 py-2 rounded-xl bg-white hover:bg-slate-200 text-black text-xs font-bold flex items-center gap-2 transition-all shadow-md">
+            <i class="fa-solid fa-arrows-rotate text-xs"></i>
+            <span>Синхронизировать</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Search & Status Bar -->
+      <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+        <!-- Search Input -->
+        <div class="relative flex-1 max-w-md">
+          <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 text-xs"></i>
+          <input type="text" id="serverSearchInput" oninput="filterServers(this.value)" placeholder="Search by name, version, or mod loader.." class="w-full bg-[#11131a] border border-[#1d202c] rounded-xl pl-9 pr-4 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500/60 font-sans transition-all">
+        </div>
+
+        <!-- Status Counters (Exact as DiscoPanel) -->
+        <div class="flex items-center gap-4 text-xs font-semibold text-slate-400 px-2">
+          <div class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span>${totalRunning} running</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-slate-600"></span>
+            <span>${totalStopped} stopped</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Server Cards List -->
+      <div id="serversContainer" class="space-y-4">
+        ${servers.map(s => `
+          <div id="serverCard_${s.id}" data-search="${(s.name + ' ' + s.version + ' ' + s.modloader + ' ' + (s.description||'')).toLowerCase()}" class="bg-[#11131a] border border-[#1b1e2a] hover:border-[#262a3c] rounded-2xl p-5 transition-all space-y-4">
+            
+            <!-- Card Header -->
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div class="flex items-start sm:items-center gap-3.5">
+                <div class="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 text-base shrink-0 shadow-sm">
+                  <i class="fa-solid fa-cube"></i>
                 </div>
                 <div>
-                  <span class="text-xs font-bold text-white">Публичный адрес игрового сервера (Домен или внешний IP)</span>
-                  <p class="text-[11px] text-slate-400">По этому адресу игроки лаунчера подключаются к Minecraft: <code class="text-cyan-300 font-mono">${s.ip}:${s.port}</code></p>
+                  <div class="flex items-center gap-2">
+                    <h3 class="text-base font-bold text-white tracking-tight">${s.name}</h3>
+                  </div>
+                  <p class="text-xs text-slate-400 mt-0.5">${s.description || 'Minecraft сервер без описания'}</p>
                 </div>
               </div>
-              <div class="flex items-center gap-2 w-full sm:w-auto">
-                <input type="text" id="hostInput_${s.id}" value="${s.publicHost || ''}" placeholder="например: mc.Varringard.site" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-cyan-300 font-mono focus:border-indigo-500 focus:outline-none w-full sm:w-56">
-                <button onclick="savePublicHost('${s.id}')" class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shadow-md shadow-indigo-600/20 shrink-0">
-                  Сохранить
+
+              <!-- Badges & Action Buttons -->
+              <div class="flex flex-wrap items-center gap-2">
+                <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span>Running</span>
+                </div>
+                <span class="px-2.5 py-1 rounded-lg bg-[#181b26] border border-[#222738] text-slate-300 text-xs font-mono font-medium">${s.version}</span>
+                <span class="px-2.5 py-1 rounded-lg bg-[#181b26] border border-[#222738] text-slate-300 text-xs font-mono font-medium capitalize">${s.modloader}</span>
+
+                <button onclick="toggleServerDetails('${s.id}')" id="toggleBtn_${s.id}" class="ml-2 px-3 py-1 rounded-lg bg-[#161822] hover:bg-[#202434] border border-[#232738] text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition-all">
+                  <i class="fa-solid fa-sliders text-[10px]"></i>
+                  <span>Управление</span>
+                  <i id="toggleArrow_${s.id}" class="fa-solid fa-chevron-down text-[10px] ml-1 transition-transform"></i>
                 </button>
               </div>
             </div>
 
-            <!-- Row: DiscoPanel Sync Toggle + Client Mods Upload -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <!-- DiscoPanel Sync Toggle -->
-              <div class="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 flex items-center justify-between gap-4">
-                <div>
-                  <div class="flex items-center gap-2">
-                    <i class="fa-solid fa-arrows-rotate ${s.isModsSyncEnabled ? 'text-indigo-400' : 'text-slate-500'}"></i>
-                    <span class="text-xs font-bold text-white">Синхронизация с DiscoPanel</span>
-                  </div>
-                  <p class="text-[11px] text-slate-400 mt-1">
-                    ${s.isModsSyncEnabled ? 'Включена: серверные моды подтягиваются из DiscoPanel' : 'Отключена: загрузка модов из DiscoPanel заблокирована'}
-                  </p>
+            <!-- 4 Metric Widgets (Exact like DiscoPanel) -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924]">
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <i class="fa-solid fa-network-wired text-slate-400"></i> PORT
                 </div>
-                <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                  <input type="checkbox" ${s.isModsSyncEnabled ? 'checked' : ''} onchange="toggleSync('${s.id}', this.checked)" class="sr-only peer">
-                  <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                </label>
+                <div class="text-sm font-bold text-white font-mono mt-1">${s.port}</div>
               </div>
 
-              <!-- Client Mods Upload Area -->
-              <div class="p-4 rounded-2xl bg-cyan-950/20 border border-cyan-900/40 flex items-center justify-between gap-4">
-                <div>
-                  <div class="flex items-center gap-2 text-cyan-300 font-bold text-xs">
-                    <i class="fa-solid fa-cloud-arrow-up"></i>
-                    <span>Клиентские моды (только лаунчер)</span>
-                  </div>
-                  <p class="text-[11px] text-slate-400 mt-1">
-                    Отдаются игрокам, но НЕ затрагивают сервер Minecraft
-                  </p>
+              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924]">
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <i class="fa-solid fa-box text-slate-400"></i> MODS / FILES
                 </div>
-                <div class="shrink-0">
-                  <input type="file" id="modFile_${s.id}" multiple accept=".jar" class="hidden" onchange="uploadClientMods('${s.id}', this.files)">
-                  <button onclick="document.getElementById('modFile_${s.id}').click()" class="px-3.5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-cyan-600/20">
-                    <i class="fa-solid fa-plus"></i> Загрузить .jar
-                  </button>
+                <div class="text-sm font-bold text-white font-mono mt-1">${s.totalMods} шт</div>
+              </div>
+
+              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924]">
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <i class="fa-solid fa-users text-emerald-400"></i> PLAYERS
                 </div>
+                <div class="text-sm font-bold font-mono mt-1">
+                  <span class="text-emerald-400 font-bold">${s.online || 0}</span> <span class="text-slate-500">/ ${s.maxOnline}</span>
+                </div>
+              </div>
+
+              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924]">
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <i class="fa-solid fa-bolt text-emerald-400"></i> STATUS
+                </div>
+                <div class="text-sm font-bold text-emerald-400 font-mono mt-1">Online</div>
               </div>
             </div>
 
-            <!-- Mods list -->
-            <div>
-              <div class="flex items-center justify-between mb-2.5">
-                <span class="text-xs font-bold text-slate-300">
-                  Установленные моды сборки (${s.totalMods})
-                </span>
-                <span class="text-[11px] text-slate-500">
-                  Клиентские моды отмечены синим и удаляются по кнопке корзины
-                </span>
-              </div>
-              ${s.modsList.length === 0 ? `
-                <div class="p-4 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-center text-xs text-slate-500">
-                  В этой сборке пока нет модов. Включите синхронизацию с DiscoPanel или загрузите клиентские моды выше.
-                </div>
-              ` : `
-                <div class="flex flex-wrap gap-2">
-                  ${s.modsList.map(m => `
-                    <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-mono ${m.isClient ? 'bg-cyan-950/50 border border-cyan-800/60 text-cyan-200 shadow-sm' : 'bg-slate-900/80 border border-slate-800 text-slate-300'}">
-                      <i class="fa-solid fa-cube ${m.isClient ? 'text-cyan-400' : 'text-indigo-400'}"></i>
-                      <span class="truncate max-w-[260px]">${m.name}</span>
-                      <span class="text-[9px] px-1.5 py-0.5 rounded font-sans font-bold uppercase ${m.isClient ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'bg-slate-800 text-slate-400'}">
-                        ${m.isClient ? 'Клиентский' : 'DiscoPanel'}
-                      </span>
-                      <button onclick="deleteMod('${s.id}', '${m.name}')" title="Удалить мод" class="text-slate-500 hover:text-red-400 transition-colors ml-1 p-0.5">
-                        <i class="fa-solid fa-trash-can text-xs"></i>
-                      </button>
-                    </div>
-                  `).join('')}
-                </div>
-              `}
-            </div>
-
-            <!-- Row: Shaders & Resourcepacks Uploads -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-800/60">
-              <!-- Shaders Upload Area -->
-              <div class="p-4 rounded-2xl bg-amber-950/20 border border-amber-900/40 flex items-center justify-between gap-4">
+            <!-- Expandable Management Section -->
+            <div id="details_${s.id}" class="hidden pt-4 border-t border-[#1a1d2b] space-y-5">
+              
+              <!-- Public Domain / Host IP for Minecraft -->
+              <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-[#0b0c11] border border-[#1a1d2b]">
                 <div>
-                  <div class="flex items-center gap-2 text-amber-300 font-bold text-xs">
-                    <i class="fa-solid fa-sun"></i>
-                    <span>Шейдеры (shaderpacks)</span>
-                  </div>
-                  <p class="text-[11px] text-slate-400 mt-1">
-                    Архивы .zip (Iris / Oculus / OptiFine). Автокачка в shaderpacks/
-                  </p>
+                  <span class="text-xs font-bold text-white flex items-center gap-1.5">
+                    <i class="fa-solid fa-globe text-cyan-400"></i>
+                    Публичный адрес игрового сервера (Домен или внешний IP)
+                  </span>
+                  <p class="text-[11px] text-slate-400 mt-0.5">Адрес подключения для лаунчера: <code class="text-cyan-300 font-mono font-bold">${s.ip}:${s.port}</code></p>
                 </div>
-                <div class="shrink-0">
-                  <input type="file" id="shaderFile_${s.id}" multiple accept=".zip" class="hidden" onchange="uploadShaders('${s.id}', this.files)">
-                  <button onclick="document.getElementById('shaderFile_${s.id}').click()" class="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-amber-600/20">
-                    <i class="fa-solid fa-plus"></i> Загрузить .zip
+                <div class="flex items-center gap-2 w-full sm:w-auto">
+                  <input type="text" id="hostInput_${s.id}" value="${s.publicHost || ''}" placeholder="например: mc.example.com" class="bg-[#12141c] border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-cyan-300 font-mono focus:border-indigo-500 focus:outline-none w-full sm:w-56">
+                  <button onclick="savePublicHost('${s.id}')" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shrink-0">
+                    Сохранить
                   </button>
                 </div>
               </div>
 
-              <!-- Resourcepacks Upload Area -->
-              <div class="p-4 rounded-2xl bg-emerald-950/20 border border-emerald-900/40 flex items-center justify-between gap-4">
-                <div>
-                  <div class="flex items-center gap-2 text-emerald-300 font-bold text-xs">
-                    <i class="fa-solid fa-palette"></i>
-                    <span>Ресурспаки (resourcepacks)</span>
+              <!-- 3 Column Cards: Mods, Shaders, Resourcepacks -->
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                
+                <!-- Client Mods Card -->
+                <div class="p-4 rounded-xl bg-[#0b0c11] border border-[#1a1d2b] flex flex-col justify-between space-y-3">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2 text-cyan-400 font-bold text-xs">
+                      <i class="fa-solid fa-puzzle-piece"></i>
+                      <span>Клиентские моды</span>
+                    </div>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 font-mono font-bold">${s.totalMods}</span>
                   </div>
-                  <p class="text-[11px] text-slate-400 mt-1">
-                    Архивы .zip текстур и звуков. Автокачка в resourcepacks/
-                  </p>
+                  <p class="text-[11px] text-slate-400">Загрузка .jar модов, которые нужны только игрокам</p>
+                  <div>
+                    <input type="file" id="modFile_${s.id}" multiple accept=".jar" class="hidden" onchange="uploadClientMods('${s.id}', this.files)">
+                    <button onclick="document.getElementById('modFile_${s.id}').click()" class="w-full py-2 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/30 text-cyan-300 text-xs font-bold flex items-center justify-center gap-2 transition-all">
+                      <i class="fa-solid fa-plus text-[10px]"></i> Загрузить .jar
+                    </button>
+                  </div>
                 </div>
-                <div class="shrink-0">
-                  <input type="file" id="rpFile_${s.id}" multiple accept=".zip" class="hidden" onchange="uploadResourcepacks('${s.id}', this.files)">
-                  <button onclick="document.getElementById('rpFile_${s.id}').click()" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-emerald-600/20">
-                    <i class="fa-solid fa-plus"></i> Загрузить .zip
-                  </button>
+
+                <!-- Shaders Card -->
+                <div class="p-4 rounded-xl bg-[#0b0c11] border border-[#1a1d2b] flex flex-col justify-between space-y-3">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2 text-amber-400 font-bold text-xs">
+                      <i class="fa-solid fa-sun"></i>
+                      <span>Шейдеры (shaderpacks)</span>
+                    </div>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 font-mono font-bold">${s.shadersList.length}</span>
+                  </div>
+                  <p class="text-[11px] text-slate-400">Архивы .zip для Oculus/Iris/OptiFine</p>
+                  <div>
+                    <input type="file" id="shaderFile_${s.id}" multiple accept=".zip" class="hidden" onchange="uploadShaders('${s.id}', this.files)">
+                    <button onclick="document.getElementById('shaderFile_${s.id}').click()" class="w-full py-2 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center justify-center gap-2 transition-all">
+                      <i class="fa-solid fa-plus text-[10px]"></i> Загрузить .zip
+                    </button>
+                  </div>
                 </div>
+
+                <!-- Resourcepacks Card -->
+                <div class="p-4 rounded-xl bg-[#0b0c11] border border-[#1a1d2b] flex flex-col justify-between space-y-3">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+                      <i class="fa-solid fa-palette"></i>
+                      <span>Ресурспаки</span>
+                    </div>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 font-mono font-bold">${s.resourcepacksList.length}</span>
+                  </div>
+                  <p class="text-[11px] text-slate-400">Архивы .zip текстур и звуков для игры</p>
+                  <div>
+                    <input type="file" id="rpFile_${s.id}" multiple accept=".zip" class="hidden" onchange="uploadResourcepacks('${s.id}', this.files)">
+                    <button onclick="document.getElementById('rpFile_${s.id}').click()" class="w-full py-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center justify-center gap-2 transition-all">
+                      <i class="fa-solid fa-plus text-[10px]"></i> Загрузить .zip
+                    </button>
+                  </div>
+                </div>
+
               </div>
+
+              <!-- Files Lists (Shaders & Resourcepacks) -->
+              ${s.shadersList.length > 0 ? `
+                <div class="space-y-1.5">
+                  <div class="text-[11px] font-bold text-slate-400">Загруженные шейдеры:</div>
+                  <div class="flex flex-wrap gap-2">
+                    ${s.shadersList.map(sh => `
+                      <div class="flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-mono bg-amber-950/20 border border-amber-900/40 text-amber-200">
+                        <i class="fa-solid fa-sun text-[10px] text-amber-400"></i>
+                        <span class="truncate max-w-[200px]">${sh.name}</span>
+                        <span class="text-[9px] px-1 rounded bg-amber-500/20 text-amber-300 font-sans">${sh.sizeMb}MB</span>
+                        <button onclick="deleteShader('${s.id}', '${sh.name}')" title="Удалить" class="text-slate-500 hover:text-red-400 transition-colors ml-1">
+                          <i class="fa-solid fa-xmark text-xs"></i>
+                        </button>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+              ` : ''}
+
+              ${s.resourcepacksList.length > 0 ? `
+                <div class="space-y-1.5">
+                  <div class="text-[11px] font-bold text-slate-400">Загруженные ресурспаки:</div>
+                  <div class="flex flex-wrap gap-2">
+                    ${s.resourcepacksList.map(rp => `
+                      <div class="flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-mono bg-emerald-950/20 border border-emerald-900/40 text-emerald-200">
+                        <i class="fa-solid fa-palette text-[10px] text-emerald-400"></i>
+                        <span class="truncate max-w-[200px]">${rp.name}</span>
+                        <span class="text-[9px] px-1 rounded bg-emerald-500/20 text-emerald-300 font-sans">${rp.sizeMb}MB</span>
+                        <button onclick="deleteResourcepack('${s.id}', '${rp.name}')" title="Удалить" class="text-slate-500 hover:text-red-400 transition-colors ml-1">
+                          <i class="fa-solid fa-xmark text-xs"></i>
+                        </button>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+              ` : ''}
+
             </div>
 
-            <!-- Shaders list -->
-            <div>
-              <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-bold text-slate-300">
-                  Установленные шейдеры (${s.shadersList.length})
-                </span>
-                <span class="text-[11px] text-slate-500">
-                  Папка: shaderpacks/ (скачиваются игрокам)
-                </span>
-              </div>
-              ${s.shadersList.length === 0 ? `
-                <div class="p-3 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-center text-xs text-slate-500">
-                  Шейдеры не загружены. Нажмите «Загрузить .zip» выше.
-                </div>
-              ` : `
-                <div class="flex flex-wrap gap-2">
-                  ${s.shadersList.map(sh => `
-                    <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-mono bg-amber-950/40 border border-amber-900/60 text-amber-200">
-                      <i class="fa-solid fa-sun text-amber-400"></i>
-                      <span class="truncate max-w-[260px]">${sh.name}</span>
-                      <span class="text-[9px] px-1.5 py-0.5 rounded font-sans font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                        ${sh.sizeMb} MB
-                      </span>
-                      <button onclick="deleteShader('${s.id}', '${sh.name}')" title="Удалить шейдер" class="text-slate-500 hover:text-red-400 transition-colors ml-1 p-0.5">
-                        <i class="fa-solid fa-trash-can text-xs"></i>
-                      </button>
-                    </div>
-                  `).join('')}
-                </div>
-              `}
-            </div>
-
-            <!-- Resourcepacks list -->
-            <div>
-              <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-bold text-slate-300">
-                  Установленные ресурспаки (${s.resourcepacksList.length})
-                </span>
-                <span class="text-[11px] text-slate-500">
-                  Папка: resourcepacks/ (скачиваются игрокам)
-                </span>
-              </div>
-              ${s.resourcepacksList.length === 0 ? `
-                <div class="p-3 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-center text-xs text-slate-500">
-                  Ресурспаки не загружены. Нажмите «Загрузить .zip» выше.
-                </div>
-              ` : `
-                <div class="flex flex-wrap gap-2">
-                  ${s.resourcepacksList.map(rp => `
-                    <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-mono bg-emerald-950/40 border border-emerald-900/60 text-emerald-200">
-                      <i class="fa-solid fa-palette text-emerald-400"></i>
-                      <span class="truncate max-w-[260px]">${rp.name}</span>
-                      <span class="text-[9px] px-1.5 py-0.5 rounded font-sans font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                        ${rp.sizeMb} MB
-                      </span>
-                      <button onclick="deleteResourcepack('${s.id}', '${rp.name}')" title="Удалить ресурспак" class="text-slate-500 hover:text-red-400 transition-colors ml-1 p-0.5">
-                        <i class="fa-solid fa-trash-can text-xs"></i>
-                      </button>
-                    </div>
-                  `).join('')}
-                </div>
-              `}
-            </div>
           </div>
         `).join('')}
       </div>
-    </div>
-    </div> <!-- /tab_servers -->
 
-    <!-- TAB 2: SETTINGS -->
-    <div id="tab_settings" class="hidden space-y-8">
+    </div>
+
+    <!-- ================= SECTION: SETTINGS ================= -->
+    <div id="section_settings" class="hidden p-8 max-w-5xl w-full mx-auto space-y-6">
+      <div class="pb-4 border-b border-[#161822]">
+        <h1 class="text-xl font-black text-white tracking-tight">Settings</h1>
+        <p class="text-xs text-slate-400">Конфигурация API лаунчера и привязка к DiscoPanel</p>
+      </div>
+
       <!-- Launcher API Connection Card -->
-      <div class="bg-gradient-to-r from-cyan-950/50 via-[#121826] to-indigo-950/40 border border-cyan-500/30 rounded-3xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
-        <div class="flex items-center gap-4">
-          <div class="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-xl text-cyan-400 shrink-0 shadow-lg shadow-cyan-500/20">
+      <div class="bg-[#11131a] border border-[#1b1e2a] rounded-2xl p-6 space-y-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 text-lg shrink-0">
             <i class="fa-solid fa-satellite-dish"></i>
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <h2 class="text-sm font-bold text-white uppercase tracking-wider">Адрес API для лаунчера игроков</h2>
-              <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">Порт ${LAUNCHER_PORT}</span>
+              <h2 class="text-sm font-bold text-white">Адрес API для лаунчера игроков</h2>
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Порт ${LAUNCHER_PORT}</span>
             </div>
-            <p class="text-xs text-slate-400 mt-1">
-              Укажите эту ссылку в лаунчере: вкладка <b class="text-slate-200">«Настройки»</b> → поле <b class="text-slate-200">«Адрес сервера»</b>
-            </p>
+            <p class="text-xs text-slate-400 mt-0.5">Укажите эту ссылку в лаунчере: «Настройки» → «Адрес сервера»</p>
           </div>
         </div>
-        <div class="flex items-center gap-2 w-full md:w-auto">
-          <div class="flex items-center bg-slate-900/90 border border-cyan-500/40 rounded-2xl px-4 py-2.5 font-mono text-sm text-cyan-300 select-all shadow-inner">
+
+        <div class="flex items-center gap-3 pt-2">
+          <div class="flex-1 bg-[#0b0c11] border border-slate-700/60 rounded-xl px-4 py-2.5 font-mono text-sm text-cyan-300 select-all">
             <span id="launcherApiUrl">${launcherUrl}</span>
           </div>
-          <button onclick="copyLauncherUrl()" id="copyBtn" class="px-4 py-2.5 rounded-2xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-cyan-600/30 shrink-0">
+          <button onclick="copyLauncherUrl()" id="copyBtn" class="px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-md shrink-0">
             <i class="fa-solid fa-copy"></i>
             <span id="copyBtnText">Копировать</span>
           </button>
@@ -1135,22 +1221,25 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       </div>
 
       <!-- DiscoPanel API Settings Box -->
-      <div class="bg-[#121826] border border-indigo-950 rounded-3xl p-6 shadow-xl">
-        <div class="mb-4">
-          <h2 class="text-base font-bold text-white flex items-center gap-2">
-            <i class="fa-solid fa-link text-indigo-400"></i> Привязка DiscoPanel API
-          </h2>
-          <p class="text-xs text-slate-400 mt-1">Лаунчер использует API для автоматического обнаружения серверов и загрузки модов</p>
+      <div class="bg-[#11131a] border border-[#1b1e2a] rounded-2xl p-6 space-y-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 text-lg shrink-0">
+            <i class="fa-solid fa-link"></i>
+          </div>
+          <div>
+            <h2 class="text-sm font-bold text-white">Привязка DiscoPanel API</h2>
+            <p class="text-xs text-slate-400 mt-0.5">Автоматическое обнаружение серверов и загрузка модов</p>
+          </div>
         </div>
 
-        <form id="apiConfigForm" onsubmit="saveApiConfig(event)" class="grid grid-cols-1 md:grid-cols-12 gap-4">
+        <form id="apiConfigForm" onsubmit="saveApiConfig(event)" class="grid grid-cols-1 md:grid-cols-12 gap-3 pt-2">
           <div class="md:col-span-5">
             <label class="text-[11px] font-semibold text-slate-400 block mb-1">Адрес DiscoPanel</label>
-            <input type="text" id="dpUrlInput" value="${dpUrl}" class="w-full bg-slate-900/80 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
+            <input type="text" id="dpUrlInput" value="${dpUrl}" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3.5 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
           </div>
           <div class="md:col-span-5">
             <label class="text-[11px] font-semibold text-slate-400 block mb-1">API Токен (с префиксом dp_)</label>
-            <input type="password" id="dpTokenInput" value="${dpToken}" placeholder="dp_..." class="w-full bg-slate-900/80 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
+            <input type="password" id="dpTokenInput" value="${dpToken}" placeholder="dp_..." class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3.5 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
           </div>
           <div class="md:col-span-2 flex items-end">
             <button type="submit" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 transition-all">
@@ -1160,32 +1249,188 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         </form>
       </div>
 
-      <!-- Admin Security Settings Card -->
-      <div class="bg-[#121826] border border-indigo-950 rounded-3xl p-6 shadow-xl">
+      <!-- Admin Security Card -->
+      <div class="bg-[#11131a] border border-[#1b1e2a] rounded-2xl p-6">
         <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div class="flex items-center gap-4">
-            <div class="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-xl text-indigo-400 shrink-0 shadow-lg shadow-indigo-600/20">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-lg shrink-0">
               <i class="fa-solid fa-shield-halved"></i>
             </div>
             <div>
-              <h2 class="text-sm font-bold text-white uppercase tracking-wider">Безопасность администратора</h2>
-              <p class="text-xs text-slate-400 mt-1">Текущий логин: <b class="text-indigo-300 font-mono">${currentAdminUser}</b></p>
+              <h2 class="text-sm font-bold text-white">Безопасность администратора</h2>
+              <p class="text-xs text-slate-400 mt-0.5">Текущий логин: <b class="text-white font-mono">${currentAdminUser}</b></p>
             </div>
           </div>
-          <button onclick="openCredentialsModal()" class="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-indigo-600/30">
+          <button onclick="openCredentialsModal()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-md">
             <i class="fa-solid fa-key"></i>
             <span>Сменить логин и пароль</span>
           </button>
         </div>
       </div>
-    </div> <!-- /tab_settings -->
+
+    </div>
+
+    <!-- ================= SECTION: DASHBOARD ================= -->
+    <div id="section_dashboard" class="hidden p-8 max-w-5xl w-full mx-auto space-y-6">
+      <div class="pb-4 border-b border-[#161822]">
+        <h1 class="text-xl font-black text-white tracking-tight">Dashboard</h1>
+        <p class="text-xs text-slate-400">Общая статистика и состояние серверов</p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="p-5 rounded-2xl bg-[#11131a] border border-[#1b1e2a]">
+          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Всего серверов</div>
+          <div class="text-3xl font-black text-white font-mono mt-2">${servers.length}</div>
+          <div class="text-[11px] text-emerald-400 mt-1 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span> ${totalRunning} онлайн
+          </div>
+        </div>
+
+        <div class="p-5 rounded-2xl bg-[#11131a] border border-[#1b1e2a]">
+          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Игроков онлайн</div>
+          <div class="text-3xl font-black text-emerald-400 font-mono mt-2">${totalPlayersOnline}</div>
+          <div class="text-[11px] text-slate-400 mt-1">на всех серверах</div>
+        </div>
+
+        <div class="p-5 rounded-2xl bg-[#11131a] border border-[#1b1e2a]">
+          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Моды и паки</div>
+          <div class="text-3xl font-black text-cyan-400 font-mono mt-2">${totalModsCount}</div>
+          <div class="text-[11px] text-slate-400 mt-1">${totalShadersCount} шейдеров, ${totalPacksCount} ресурспаков</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= SECTION: API ================= -->
+    <div id="section_api" class="hidden p-8 max-w-5xl w-full mx-auto space-y-6">
+      <div class="pb-4 border-b border-[#161822]">
+        <h1 class="text-xl font-black text-white tracking-tight">API Launcher Endpoints</h1>
+        <p class="text-xs text-slate-400">Документация и доступные эндпоинты для лаунчера</p>
+      </div>
+
+      <div class="space-y-3">
+        <div class="p-4 rounded-xl bg-[#11131a] border border-[#1b1e2a] font-mono text-xs">
+          <div class="text-emerald-400 font-bold">GET /api/servers</div>
+          <div class="text-slate-400 mt-1 text-[11px]">Список всех серверов для отображения в лаунчере</div>
+        </div>
+        <div class="p-4 rounded-xl bg-[#11131a] border border-[#1b1e2a] font-mono text-xs">
+          <div class="text-emerald-400 font-bold">GET /api/servers/:id/manifest</div>
+          <div class="text-slate-400 mt-1 text-[11px]">Манифест синхронизации файлов, модов, шейдеров и ресурспаков</div>
+        </div>
+        <div class="p-4 rounded-xl bg-[#11131a] border border-[#1b1e2a] font-mono text-xs">
+          <div class="text-emerald-400 font-bold">GET /files/:id/*</div>
+          <div class="text-slate-400 mt-1 text-[11px]">Прямая скачка файлов клиентом лаунчера</div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ================= MODAL: CHANGE ADMIN CREDENTIALS ================= -->
+  <div id="credentialsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden">
+    <div class="bg-[#11131a] border border-[#222738] rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-2 text-white font-bold text-sm">
+          <i class="fa-solid fa-shield-halved text-emerald-400"></i>
+          <span>Смена данных администратора</span>
+        </div>
+        <button type="button" onclick="closeCredentialsModal()" class="text-slate-400 hover:text-white text-sm p-1">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <form onsubmit="saveCredentials(event)" class="space-y-3.5">
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Текущий пароль</label>
+          <input type="password" id="currentPassInput" required placeholder="Введите текущий пароль" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <div class="pt-2 border-t border-slate-800/60">
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Новый логин</label>
+          <input type="text" id="newUsernameInput" value="${currentAdminUser}" required placeholder="Логин администратора" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
+        </div>
+
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Новый пароль</label>
+          <input type="password" id="newPassInput" required placeholder="Минимум 4 символа" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Повторите новый пароль</label>
+          <input type="password" id="confirmPassInput" required placeholder="Повторите пароль" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <div id="credError" class="hidden p-2.5 rounded-xl bg-red-950/50 border border-red-800/50 text-xs text-red-300"></div>
+        <div id="credSuccess" class="hidden p-2.5 rounded-xl bg-emerald-950/50 border border-emerald-800/50 text-xs text-emerald-300"></div>
+
+        <div class="flex items-center justify-end gap-2.5 pt-2">
+          <button type="button" onclick="closeCredentialsModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 transition-all">
+            Отмена
+          </button>
+          <button type="submit" id="saveCredBtn" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition-all shadow-md">
+            Сохранить
+          </button>
+        </div>
+      </form>
+    </div>
   </div>
 
+  <!-- ================= SCRIPTS ================= -->
   <script>
+    function switchNav(nav) {
+      const sections = ['servers', 'settings', 'dashboard', 'api'];
+      sections.forEach(s => {
+        const el = document.getElementById('section_' + s);
+        const navEl = document.getElementById('nav_' + s);
+        if (el) el.classList.toggle('hidden', s !== nav);
+        if (navEl) {
+          if (s === nav) {
+            navEl.className = "w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold text-white bg-[#151824] border border-[#222738] shadow-sm transition-all";
+          } else {
+            navEl.className = "w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-[#12141c] transition-all";
+          }
+        }
+      });
+      try { localStorage.setItem('discopanel_active_nav', nav); } catch(e) {}
+    }
+
+    try {
+      const savedNav = localStorage.getItem('discopanel_active_nav');
+      if (savedNav) switchNav(savedNav);
+    } catch(e) {}
+
+    function filterServers(query) {
+      const q = (query || '').toLowerCase().trim();
+      const cards = document.querySelectorAll('[id^="serverCard_"]');
+      cards.forEach(card => {
+        const text = card.getAttribute('data-search') || '';
+        card.style.display = text.includes(q) ? '' : 'none';
+      });
+    }
+
+    function scrollToServer(serverId) {
+      switchNav('servers');
+      const card = document.getElementById('serverCard_' + serverId);
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.classList.add('ring-2', 'ring-emerald-500/50');
+        setTimeout(() => card.classList.remove('ring-2', 'ring-emerald-500/50'), 2000);
+      }
+    }
+
+    function toggleServerDetails(serverId) {
+      const details = document.getElementById('details_' + serverId);
+      const arrow = document.getElementById('toggleArrow_' + serverId);
+      if (details) {
+        const isHidden = details.classList.contains('hidden');
+        details.classList.toggle('hidden', !isHidden);
+        if (arrow) {
+          arrow.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
+        }
+      }
+    }
+
     async function logoutAdmin() {
-      try {
-        await fetch('/api/logout', { method: 'POST' });
-      } catch(e) {}
+      try { await fetch('/api/logout', { method: 'POST' }); } catch(e) {}
       window.location.href = '/login';
     }
 
@@ -1201,155 +1446,13 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         });
         const d = await res.json();
         if (d.success) {
-          alert('Настройки сохранены! Серверы обновятся автоматически.');
-          window.location.reload();
-        }
-      } catch (err) {
-        alert('Ошибка сохранения: ' + err.message);
-      }
-    }
-
-    async function toggleSync(serverId, enabled) {
-      try {
-        const res = await fetch('/api/admin/servers/' + serverId + '/toggle-sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled })
-        });
-        const d = await res.json();
-        if (d.success) {
+          alert('Настройки успешно сохранены!');
           window.location.reload();
         } else {
-          alert('Ошибка переключения синхронизации: ' + (d.error || 'Ошибка'));
+          alert('Ошибка: ' + (d.error || 'Не удалось сохранить'));
         }
       } catch (err) {
-        alert('Ошибка: ' + err.message);
-      }
-    }
-
-    async function uploadClientMods(serverId, fileList) {
-      if (!fileList || fileList.length === 0) return;
-      const formData = new FormData();
-      for (let i = 0; i < fileList.length; i++) {
-        formData.append('mods', fileList[i]);
-      }
-      try {
-        const res = await fetch('/api/admin/servers/' + serverId + '/upload-mod', {
-          method: 'POST',
-          body: formData
-        });
-        const d = await res.json();
-        if (d.success) {
-          alert('Успешно загружено клиентских модов: ' + d.count);
-          window.location.reload();
-        } else {
-          alert('Ошибка загрузки: ' + (d.error || 'Ошибка'));
-        }
-      } catch (err) {
-        alert('Ошибка загрузки: ' + err.message);
-      }
-    }
-
-    async function deleteMod(serverId, filename) {
-      if (!confirm('Удалить мод "' + filename + '"?')) return;
-      try {
-        const res = await fetch('/api/admin/servers/' + serverId + '/delete-mod', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename })
-        });
-        const d = await res.json();
-        if (d.success) {
-          window.location.reload();
-        } else {
-          alert('Ошибка удаления: ' + (d.error || 'Ошибка'));
-        }
-      } catch (err) {
-        alert('Ошибка удаления: ' + err.message);
-      }
-    }
-
-    async function uploadShaders(serverId, fileList) {
-      if (!fileList || fileList.length === 0) return;
-      const formData = new FormData();
-      for (let i = 0; i < fileList.length; i++) {
-        formData.append('shaders', fileList[i]);
-      }
-      try {
-        const res = await fetch('/api/admin/servers/' + serverId + '/upload-shader', {
-          method: 'POST',
-          body: formData
-        });
-        const d = await res.json();
-        if (d.success) {
-          alert('Успешно загружено шейдеров: ' + d.count);
-          window.location.reload();
-        } else {
-          alert('Ошибка загрузки шейдеров: ' + (d.error || 'Ошибка'));
-        }
-      } catch (err) {
-        alert('Ошибка загрузки шейдеров: ' + err.message);
-      }
-    }
-
-    async function deleteShader(serverId, filename) {
-      if (!confirm('Удалить шейдер "' + filename + '"?')) return;
-      try {
-        const res = await fetch('/api/admin/servers/' + serverId + '/delete-shader', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename })
-        });
-        const d = await res.json();
-        if (d.success) {
-          window.location.reload();
-        } else {
-          alert('Ошибка удаления: ' + (d.error || 'Ошибка'));
-        }
-      } catch (err) {
-        alert('Ошибка удаления: ' + err.message);
-      }
-    }
-
-    async function uploadResourcepacks(serverId, fileList) {
-      if (!fileList || fileList.length === 0) return;
-      const formData = new FormData();
-      for (let i = 0; i < fileList.length; i++) {
-        formData.append('resourcepacks', fileList[i]);
-      }
-      try {
-        const res = await fetch('/api/admin/servers/' + serverId + '/upload-resourcepack', {
-          method: 'POST',
-          body: formData
-        });
-        const d = await res.json();
-        if (d.success) {
-          alert('Успешно загружено ресурспаков: ' + d.count);
-          window.location.reload();
-        } else {
-          alert('Ошибка загрузки ресурспаков: ' + (d.error || 'Ошибка'));
-        }
-      } catch (err) {
-        alert('Ошибка загрузки ресурспаков: ' + err.message);
-      }
-    }
-
-    async function deleteResourcepack(serverId, filename) {
-      if (!confirm('Удалить ресурспак "' + filename + '"?')) return;
-      try {
-        const res = await fetch('/api/admin/servers/' + serverId + '/delete-resourcepack', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename })
-        });
-        const d = await res.json();
-        if (d.success) {
-          window.location.reload();
-        } else {
-          alert('Ошибка удаления: ' + (d.error || 'Ошибка'));
-        }
-      } catch (err) {
-        alert('Ошибка удаления: ' + err.message);
+        alert('Ошибка сети: ' + err.message);
       }
     }
 
@@ -1358,13 +1461,13 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         const res = await fetch('/api/admin/sync-api', { method: 'POST' });
         const d = await res.json();
         if (d.success) {
-          alert('Синхронизация с DiscoPanel завершена!');
+          alert('Синхронизация с серверами завершена!');
           window.location.reload();
         } else {
-          alert('Ошибка синхронизации: ' + (d.error || 'Ошибка'));
+          alert('Ошибка: ' + (d.error || 'Ошибка синхронизации'));
         }
       } catch (err) {
-        alert('Ошибка синхронизации: ' + err.message);
+        alert('Ошибка сети: ' + err.message);
       }
     }
 
@@ -1374,11 +1477,8 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         const btnText = document.getElementById('copyBtnText');
         const origText = btnText.textContent;
         btnText.textContent = 'Скопировано!';
-        setTimeout(() => {
-          btnText.textContent = origText;
-        }, 2000);
+        setTimeout(() => { btnText.textContent = origText; }, 2000);
       }).catch(() => {
-        // Fallback
         const dummy = document.createElement('textarea');
         dummy.value = text;
         document.body.appendChild(dummy);
@@ -1412,11 +1512,102 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       }
     }
 
-    try {
-      if (window.location.hostname) {
-        document.getElementById('launcherApiUrl').textContent = 'http://' + window.location.hostname + ':${LAUNCHER_PORT}';
+    async function uploadClientMods(serverId, fileList) {
+      if (!fileList || fileList.length === 0) return;
+      const formData = new FormData();
+      for (let i = 0; i < fileList.length; i++) {
+        formData.append('mods', fileList[i]);
       }
-    } catch(e) {}
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/upload-mod', {
+          method: 'POST',
+          body: formData
+        });
+        const d = await res.json();
+        if (d.success) {
+          alert('Успешно загружено модов: ' + d.count);
+          window.location.reload();
+        } else {
+          alert('Ошибка загрузки: ' + (d.error || 'Ошибка'));
+        }
+      } catch (err) {
+        alert('Ошибка загрузки: ' + err.message);
+      }
+    }
+
+    async function uploadShaders(serverId, fileList) {
+      if (!fileList || fileList.length === 0) return;
+      const formData = new FormData();
+      for (let i = 0; i < fileList.length; i++) {
+        formData.append('shaders', fileList[i]);
+      }
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/upload-shader', {
+          method: 'POST',
+          body: formData
+        });
+        const d = await res.json();
+        if (d.success) {
+          alert('Успешно загружено шейдеров: ' + d.count);
+          window.location.reload();
+        } else {
+          alert('Ошибка: ' + (d.error || 'Ошибка'));
+        }
+      } catch (err) {
+        alert('Ошибка: ' + err.message);
+      }
+    }
+
+    async function deleteShader(serverId, filename) {
+      if (!confirm('Удалить шейдер "' + filename + '"?')) return;
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/delete-shader', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename })
+        });
+        const d = await res.json();
+        if (d.success) { window.location.reload(); }
+        else { alert('Ошибка: ' + (d.error || 'Ошибка')); }
+      } catch (err) { alert('Ошибка: ' + err.message); }
+    }
+
+    async function uploadResourcepacks(serverId, fileList) {
+      if (!fileList || fileList.length === 0) return;
+      const formData = new FormData();
+      for (let i = 0; i < fileList.length; i++) {
+        formData.append('resourcepacks', fileList[i]);
+      }
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/upload-resourcepack', {
+          method: 'POST',
+          body: formData
+        });
+        const d = await res.json();
+        if (d.success) {
+          alert('Успешно загружено ресурспаков: ' + d.count);
+          window.location.reload();
+        } else {
+          alert('Ошибка: ' + (d.error || 'Ошибка'));
+        }
+      } catch (err) {
+        alert('Ошибка: ' + err.message);
+      }
+    }
+
+    async function deleteResourcepack(serverId, filename) {
+      if (!confirm('Удалить ресурспак "' + filename + '"?')) return;
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/delete-resourcepack', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename })
+        });
+        const d = await res.json();
+        if (d.success) { window.location.reload(); }
+        else { alert('Ошибка: ' + (d.error || 'Ошибка')); }
+      } catch (err) { alert('Ошибка: ' + err.message); }
+    }
 
     function openCredentialsModal() {
       document.getElementById('credError').classList.add('hidden');
@@ -1448,13 +1639,11 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         errBox.classList.remove('hidden');
         return;
       }
-
       if (newPassword !== confirmPassword) {
         errBox.textContent = 'Новые пароли не совпадают!';
         errBox.classList.remove('hidden');
         return;
       }
-
       if (newPassword.length < 4) {
         errBox.textContent = 'Пароль должен быть не менее 4 символов!';
         errBox.classList.remove('hidden');
@@ -1473,11 +1662,11 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         });
         const d = await res.json();
         if (d.success) {
-          succBox.textContent = 'Логин и пароль успешно изменены! Перезагрузка...';
+          succBox.textContent = 'Данные успешно сохранены! Перезагрузка...';
           succBox.classList.remove('hidden');
-          setTimeout(() => { window.location.reload(); }, 1200);
+          setTimeout(() => window.location.reload(), 1200);
         } else {
-          errBox.textContent = d.error || 'Ошибка при сохранении';
+          errBox.textContent = d.error || 'Ошибка сохранения';
           errBox.classList.remove('hidden');
         }
       } catch (err) {
@@ -1489,86 +1678,12 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       }
     }
 
-    function switchTab(tab) {
-      const isServers = tab === 'servers';
-      const tabServers = document.getElementById('tab_servers');
-      const tabSettings = document.getElementById('tab_settings');
-      if (tabServers && tabSettings) {
-        tabServers.classList.toggle('hidden', !isServers);
-        tabSettings.classList.toggle('hidden', isServers);
-      }
-
-      const btnServers = document.getElementById('tabBtn_servers');
-      const btnSettings = document.getElementById('tabBtn_settings');
-      if (btnServers && btnSettings) {
-        if (isServers) {
-          btnServers.className = "px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 cursor-pointer";
-          btnSettings.className = "px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 cursor-pointer";
-        } else {
-          btnSettings.className = "px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 cursor-pointer";
-          btnServers.className = "px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 transition-all bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 cursor-pointer";
-        }
-      }
-
-      try { localStorage.setItem('disco_admin_tab', tab); } catch(e) {}
-    }
-
     try {
-      const savedTab = localStorage.getItem('disco_admin_tab');
-      if (savedTab === 'settings') {
-        switchTab('settings');
+      if (window.location.hostname) {
+        document.getElementById('launcherApiUrl').textContent = 'http://' + window.location.hostname + ':${LAUNCHER_PORT}';
       }
     } catch(e) {}
   </script>
-
-  <!-- Modal: Change Admin Credentials -->
-  <div id="credentialsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm hidden">
-    <div class="bg-[#121826] border border-indigo-900/80 rounded-3xl p-6 max-w-md w-full mx-4 shadow-2xl space-y-4">
-      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
-        <div class="flex items-center gap-2 text-white font-bold text-base">
-          <i class="fa-solid fa-shield-halved text-indigo-400"></i>
-          <span>Смена данных администратора</span>
-        </div>
-        <button type="button" onclick="closeCredentialsModal()" class="text-slate-400 hover:text-white text-sm p-1">
-          <i class="fa-solid fa-xmark"></i>
-        </button>
-      </div>
-
-      <form onsubmit="saveCredentials(event)" class="space-y-4">
-        <div>
-          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Текущий пароль</label>
-          <input type="password" id="currentPassInput" required placeholder="Введите текущий пароль" class="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
-        </div>
-
-        <div class="pt-2 border-t border-slate-800/60">
-          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Новый логин</label>
-          <input type="text" id="newUsernameInput" value="${currentAdminUser}" required placeholder="Логин администратора" class="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
-        </div>
-
-        <div>
-          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Новый пароль</label>
-          <input type="password" id="newPassInput" required placeholder="Минимум 4 символа" class="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
-        </div>
-
-        <div>
-          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Повторите новый пароль</label>
-          <input type="password" id="confirmPassInput" required placeholder="Повторите пароль" class="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
-        </div>
-
-        <div id="credError" class="hidden p-3 rounded-xl bg-red-950/50 border border-red-800/50 text-xs text-red-300"></div>
-        <div id="credSuccess" class="hidden p-3 rounded-xl bg-emerald-950/50 border border-emerald-800/50 text-xs text-emerald-300"></div>
-
-        <div class="flex items-center justify-end gap-3 pt-2">
-          <button type="button" onclick="closeCredentialsModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 transition-all">
-            Отмена
-          </button>
-          <button type="submit" id="saveCredBtn" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shadow-lg shadow-indigo-600/30">
-            Сохранить
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
 </body>
 </html>`;
 
