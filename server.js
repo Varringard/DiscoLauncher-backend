@@ -15,7 +15,7 @@ const http = require('http');
 // Config & Ports
 const ADMIN_PORT = process.env.ADMIN_PORT || 5000;
 const LAUNCHER_PORT = process.env.LAUNCHER_PORT || 6500;
-const JWT_SECRET = process.env.JWT_SECRET || require('crypto').randomBytes(32).toString('hex');
+let JWT_SECRET = process.env.JWT_SECRET; // Will be loaded from DB if not set
 
 // Admin Credentials
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
@@ -81,6 +81,15 @@ if (!getSetting('discopanel_url')) {
 }
 if (!getSetting('discopanel_token')) {
   setSetting('discopanel_token', '');
+}
+
+// Persistent JWT Secret from DB or ENV (sessions never expire on server restart)
+if (!JWT_SECRET) {
+  JWT_SECRET = getSetting('jwt_secret');
+  if (!JWT_SECRET) {
+    JWT_SECRET = crypto.randomBytes(32).toString('hex');
+    setSetting('jwt_secret', JWT_SECRET);
+  }
 }
 
 // Admin credentials helper (supports dynamic update via settings table)
@@ -593,6 +602,7 @@ adminApp.get('/login', (req, res) => {
     } catch (e) {}
   }
 
+  const currentAdminUser = getAdminCredentials().username;
   const html = `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -632,7 +642,7 @@ adminApp.get('/login', (req, res) => {
             <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
               <i class="fa-solid fa-user text-xs"></i>
             </span>
-            <input type="text" id="username" required autocomplete="username" value="varringard" placeholder="varringard"
+            <input type="text" id="username" required autocomplete="username" value="${currentAdminUser}" placeholder="${currentAdminUser}"
               class="w-full pl-10 pr-4 py-2.5 bg-slate-900/90 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none transition-colors">
           </div>
         </div>
@@ -677,6 +687,7 @@ adminApp.get('/login', (req, res) => {
         });
         const data = await res.json();
         if (data.success) {
+          try { localStorage.setItem('admin_token', data.token); } catch(e) {}
           window.location.href = '/admin';
         } else {
           errText.textContent = data.error || 'Неверный логин или пароль';
@@ -715,8 +726,8 @@ adminApp.post('/api/login', (req, res) => {
   }
 
   if (isValid) {
-    const token = jwt.sign({ role: 'admin', user: adminCreds.username }, JWT_SECRET, { expiresIn: '7d' });
-    res.setHeader('Set-Cookie', `admin_token=${token}; HttpOnly; Path=/; Max-Age=604800; SameSite=Lax`);
+    const token = jwt.sign({ role: 'admin', user: adminCreds.username }, JWT_SECRET, { expiresIn: '90d' });
+    res.setHeader('Set-Cookie', `admin_token=${token}; HttpOnly; Path=/; Max-Age=7776000; SameSite=Lax`);
     return res.json({ success: true, token });
   }
   return res.status(401).json({ success: false, error: 'Неверный логин или пароль' });
@@ -753,8 +764,8 @@ adminApp.post('/api/admin/change-credentials', requireAdminAuth, (req, res) => {
   setSetting('admin_password_hash', newHash);
   setSetting('admin_password', ''); // clear plain
 
-  const token = jwt.sign({ role: 'admin', user: cleanUser }, JWT_SECRET, { expiresIn: '7d' });
-  res.setHeader('Set-Cookie', `admin_token=${token}; HttpOnly; Path=/; Max-Age=604800; SameSite=Lax`);
+  const token = jwt.sign({ role: 'admin', user: cleanUser }, JWT_SECRET, { expiresIn: '90d' });
+  res.setHeader('Set-Cookie', `admin_token=${token}; HttpOnly; Path=/; Max-Age=7776000; SameSite=Lax`);
 
   return res.json({ success: true, message: 'Данные администратора успешно изменены' });
 });
@@ -1485,6 +1496,23 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
 
   <!-- ================= SCRIPTS ================= -->
   <script>
+    (function() {
+      const origFetch = window.fetch;
+      window.fetch = function(url, options) {
+        options = options || {};
+        try {
+          const token = localStorage.getItem('admin_token');
+          if (token) {
+            options.headers = options.headers || {};
+            if (!(options.headers instanceof Headers) && !options.headers['Authorization']) {
+              options.headers['Authorization'] = 'Bearer ' + token;
+            }
+          }
+        } catch(e) {}
+        return origFetch(url, options);
+      };
+    })();
+
     function switchNav(nav) {
       const sections = ['servers', 'settings', 'dashboard', 'api'];
       sections.forEach(s => {
@@ -1601,6 +1629,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
     }
 
     async function logoutAdmin() {
+      try { localStorage.removeItem('admin_token'); } catch(e) {}
       try { await fetch('/api/logout', { method: 'POST' }); } catch(e) {}
       window.location.href = '/login';
     }
