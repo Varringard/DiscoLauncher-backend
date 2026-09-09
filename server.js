@@ -528,12 +528,21 @@ launcherApp.get('/api/servers/:id/manifest', (req, res) => {
     if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
   }
 
+  const disabledModsPath = path.join(serverDir, 'disabled_mods.json');
+  let disabledMods = new Set();
+  try {
+    if (fs.existsSync(disabledModsPath)) {
+      disabledMods = new Set(JSON.parse(fs.readFileSync(disabledModsPath, 'utf8')));
+    }
+  } catch (e) {}
+
   function scanDir(currentDir, relativePrefix = '') {
     let result = [];
     if (!fs.existsSync(currentDir)) return result;
     const entries = fs.readdirSync(currentDir, { withFileTypes: true });
     for (const ent of entries) {
-      if (ent.name.startsWith('.') || ent.name === 'client_mods.json') continue;
+      if (ent.name.startsWith('.') || ent.name === 'client_mods.json' || ent.name === 'disabled_mods.json') continue;
+      if (disabledMods.has(ent.name)) continue;
       const fullPath = path.join(currentDir, ent.name);
       const relPath = path.posix.join(relativePrefix, ent.name);
       if (ent.isDirectory()) {
@@ -780,11 +789,32 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
     } catch(e) {}
     const clientModsSet = new Set(clientMods);
 
-    s.modsList = allMods.map(m => ({
-      name: m,
-      isClient: clientModsSet.has(m)
-    }));
+    // Read disabled_mods.json
+    const disabledModsFile = path.join(SERVERS_DIR, s.id, 'disabled_mods.json');
+    let disabledMods = [];
+    try {
+      if (fs.existsSync(disabledModsFile)) {
+        disabledMods = JSON.parse(fs.readFileSync(disabledModsFile, 'utf8'));
+      }
+    } catch(e) {}
+    const disabledModsSet = new Set(disabledMods);
+
+    s.modsList = allMods.map(m => {
+      let sizeMb = '0.0';
+      try {
+        const stat = fs.statSync(path.join(modsDir, m));
+        sizeMb = (stat.size / (1024 * 1024)).toFixed(1);
+      } catch (e) {}
+      return {
+        name: m,
+        isClient: clientModsSet.has(m),
+        isEnabled: !disabledModsSet.has(m),
+        sizeMb
+      };
+    });
     s.totalMods = allMods.length;
+    s.enabledModsCount = s.modsList.filter(m => m.isEnabled).length;
+    s.disabledModsCount = s.totalMods - s.enabledModsCount;
     s.isModsSyncEnabled = getSetting('sync_mods_' + s.id, 'true') !== 'false';
     const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
     if (customHost && customHost.trim()) {
@@ -843,7 +873,6 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
     }
     font-mono { font-family: 'JetBrains Mono', monospace; }
-    /* Custom scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #08090d; }
     ::-webkit-scrollbar-thumb { background: #1e2230; border-radius: 9999px; }
@@ -961,7 +990,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
           </div>
           <div>
             <h1 class="text-xl font-black text-white tracking-tight">Servers</h1>
-            <p class="text-xs text-slate-400">Manage and monitor your Minecraft server instances</p>
+            <p class="text-xs text-slate-400">Нажмите на сервер для управления модами, шейдерами и настройками</p>
           </div>
         </div>
 
@@ -975,13 +1004,11 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
 
       <!-- Search & Status Bar -->
       <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-        <!-- Search Input -->
         <div class="relative flex-1 max-w-md">
           <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 text-xs"></i>
           <input type="text" id="serverSearchInput" oninput="filterServers(this.value)" placeholder="Search by name, version, or mod loader.." class="w-full bg-[#11131a] border border-[#1d202c] rounded-xl pl-9 pr-4 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500/60 font-sans transition-all">
         </div>
 
-        <!-- Status Counters (Exact as DiscoPanel) -->
         <div class="flex items-center gap-4 text-xs font-semibold text-slate-400 px-2">
           <div class="flex items-center gap-1.5">
             <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
@@ -997,23 +1024,23 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       <!-- Server Cards List -->
       <div id="serversContainer" class="space-y-4">
         ${servers.map(s => `
-          <div id="serverCard_${s.id}" data-search="${(s.name + ' ' + s.version + ' ' + s.modloader + ' ' + (s.description||'')).toLowerCase()}" class="bg-[#11131a] border border-[#1b1e2a] hover:border-[#262a3c] rounded-2xl p-5 transition-all space-y-4">
+          <div id="serverCard_${s.id}" data-search="${(s.name + ' ' + s.version + ' ' + s.modloader + ' ' + (s.description||'')).toLowerCase()}" class="bg-[#11131a] border border-[#1b1e2a] hover:border-[#2a2f44] rounded-2xl p-5 transition-all space-y-4">
             
-            <!-- Card Header -->
-            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <!-- Clickable Server Header (Clicking anywhere opens details) -->
+            <div onclick="toggleServerDetails('${s.id}')" class="flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer select-none group">
               <div class="flex items-start sm:items-center gap-3.5">
-                <div class="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 text-base shrink-0 shadow-sm">
+                <div class="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 group-hover:border-blue-500/60 flex items-center justify-center text-blue-400 text-base shrink-0 shadow-sm transition-all">
                   <i class="fa-solid fa-cube"></i>
                 </div>
                 <div>
                   <div class="flex items-center gap-2">
-                    <h3 class="text-base font-bold text-white tracking-tight">${s.name}</h3>
+                    <h3 class="text-base font-bold text-white group-hover:text-blue-300 tracking-tight transition-colors">${s.name}</h3>
                   </div>
                   <p class="text-xs text-slate-400 mt-0.5">${s.description || 'Minecraft сервер без описания'}</p>
                 </div>
               </div>
 
-              <!-- Badges & Action Buttons -->
+              <!-- Badges & Arrow -->
               <div class="flex flex-wrap items-center gap-2">
                 <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold">
                   <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -1022,31 +1049,32 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                 <span class="px-2.5 py-1 rounded-lg bg-[#181b26] border border-[#222738] text-slate-300 text-xs font-mono font-medium">${s.version}</span>
                 <span class="px-2.5 py-1 rounded-lg bg-[#181b26] border border-[#222738] text-slate-300 text-xs font-mono font-medium capitalize">${s.modloader}</span>
 
-                <button onclick="toggleServerDetails('${s.id}')" id="toggleBtn_${s.id}" class="ml-2 px-3 py-1 rounded-lg bg-[#161822] hover:bg-[#202434] border border-[#232738] text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition-all">
-                  <i class="fa-solid fa-sliders text-[10px]"></i>
-                  <span>Управление</span>
+                <div class="ml-2 px-3 py-1 rounded-lg bg-[#161822] group-hover:bg-[#202434] border border-[#232738] text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition-all">
+                  <span>Моды и файлы</span>
                   <i id="toggleArrow_${s.id}" class="fa-solid fa-chevron-down text-[10px] ml-1 transition-transform"></i>
-                </button>
+                </div>
               </div>
             </div>
 
             <!-- 4 Metric Widgets (Exact like DiscoPanel) -->
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924]">
+            <div onclick="toggleServerDetails('${s.id}')" class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 cursor-pointer">
+              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924] hover:border-slate-700 transition-colors">
                 <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
                   <i class="fa-solid fa-network-wired text-slate-400"></i> PORT
                 </div>
                 <div class="text-sm font-bold text-white font-mono mt-1">${s.port}</div>
               </div>
 
-              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924]">
+              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924] hover:border-slate-700 transition-colors">
                 <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                  <i class="fa-solid fa-box text-slate-400"></i> MODS / FILES
+                  <i class="fa-solid fa-puzzle-piece text-cyan-400"></i> MODS
                 </div>
-                <div class="text-sm font-bold text-white font-mono mt-1">${s.totalMods} шт</div>
+                <div class="text-sm font-bold font-mono mt-1">
+                  <span class="text-cyan-400 font-bold">${s.enabledModsCount}</span> <span class="text-slate-500 text-xs">/ ${s.totalMods} вкл.</span>
+                </div>
               </div>
 
-              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924]">
+              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924] hover:border-slate-700 transition-colors">
                 <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
                   <i class="fa-solid fa-users text-emerald-400"></i> PLAYERS
                 </div>
@@ -1055,7 +1083,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                 </div>
               </div>
 
-              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924]">
+              <div class="p-3 rounded-xl bg-[#0b0c11] border border-[#171924] hover:border-slate-700 transition-colors">
                 <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
                   <i class="fa-solid fa-bolt text-emerald-400"></i> STATUS
                 </div>
@@ -1064,120 +1092,214 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
             </div>
 
             <!-- Expandable Management Section -->
-            <div id="details_${s.id}" class="hidden pt-4 border-t border-[#1a1d2b] space-y-5">
+            <div id="details_${s.id}" class="hidden pt-4 border-t border-[#1a1d2b] space-y-6">
               
-              <!-- Public Domain / Host IP for Minecraft -->
-              <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-[#0b0c11] border border-[#1a1d2b]">
-                <div>
-                  <span class="text-xs font-bold text-white flex items-center gap-1.5">
-                    <i class="fa-solid fa-globe text-cyan-400"></i>
-                    Публичный адрес игрового сервера (Домен или внешний IP)
-                  </span>
-                  <p class="text-[11px] text-slate-400 mt-0.5">Адрес подключения для лаунчера: <code class="text-cyan-300 font-mono font-bold">${s.ip}:${s.port}</code></p>
-                </div>
-                <div class="flex items-center gap-2 w-full sm:w-auto">
-                  <input type="text" id="hostInput_${s.id}" value="${s.publicHost || ''}" placeholder="например: mc.example.com" class="bg-[#12141c] border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-cyan-300 font-mono focus:border-indigo-500 focus:outline-none w-full sm:w-56">
-                  <button onclick="savePublicHost('${s.id}')" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shrink-0">
-                    Сохранить
-                  </button>
-                </div>
+              <!-- Tabs inside Server Details -->
+              <div class="flex items-center gap-2 border-b border-[#1f2232] pb-2">
+                <button onclick="switchServerTab('${s.id}', 'mods')" id="srvTabBtn_${s.id}_mods" class="px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 bg-indigo-600 text-white shadow-sm transition-all">
+                  <i class="fa-solid fa-puzzle-piece"></i>
+                  <span>Моды</span>
+                  <span class="px-1.5 py-0.2 rounded bg-indigo-500/40 text-[10px] font-mono">${s.totalMods}</span>
+                </button>
+                <button onclick="switchServerTab('${s.id}', 'shaders')" id="srvTabBtn_${s.id}_shaders" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-[#12141c] hover:bg-[#1a1d28] transition-all flex items-center gap-1.5">
+                  <i class="fa-solid fa-sun text-amber-400"></i>
+                  <span>Шейдеры</span>
+                  <span class="text-[10px] text-slate-500 font-mono">${s.shadersList.length}</span>
+                </button>
+                <button onclick="switchServerTab('${s.id}', 'resourcepacks')" id="srvTabBtn_${s.id}_resourcepacks" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-[#12141c] hover:bg-[#1a1d28] transition-all flex items-center gap-1.5">
+                  <i class="fa-solid fa-palette text-emerald-400"></i>
+                  <span>Ресурспаки</span>
+                  <span class="text-[10px] text-slate-500 font-mono">${s.resourcepacksList.length}</span>
+                </button>
+                <button onclick="switchServerTab('${s.id}', 'host')" id="srvTabBtn_${s.id}_host" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-[#12141c] hover:bg-[#1a1d28] transition-all flex items-center gap-1.5">
+                  <i class="fa-solid fa-globe text-cyan-400"></i>
+                  <span>Адрес сервера</span>
+                </button>
               </div>
 
-              <!-- 3 Column Cards: Mods, Shaders, Resourcepacks -->
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <!-- ================= TAB: MODS ================= -->
+              <div id="srvTab_${s.id}_mods" class="space-y-4">
                 
-                <!-- Client Mods Card -->
-                <div class="p-4 rounded-xl bg-[#0b0c11] border border-[#1a1d2b] flex flex-col justify-between space-y-3">
-                  <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2 text-cyan-400 font-bold text-xs">
-                      <i class="fa-solid fa-puzzle-piece"></i>
-                      <span>Клиентские моды</span>
+                <!-- Mods Controls Bar -->
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0b0c11] border border-[#1a1d2b] p-3.5 rounded-xl">
+                  <div class="flex items-center gap-3">
+                    <!-- Quick Mod Search -->
+                    <div class="relative w-full sm:w-64">
+                      <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs"></i>
+                      <input type="text" oninput="filterModRows('${s.id}', this.value)" placeholder="Поиск мода..." class="w-full bg-[#12141c] border border-slate-700/80 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-sans">
                     </div>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 font-mono font-bold">${s.totalMods}</span>
+
+                    <!-- DiscoPanel Sync Toggle -->
+                    <label class="flex items-center gap-2 cursor-pointer text-xs text-slate-300 font-medium select-none">
+                      <input type="checkbox" ${s.isModsSyncEnabled ? 'checked' : ''} onchange="toggleSync('${s.id}', this.checked)" class="w-4 h-4 accent-indigo-600 rounded">
+                      <span class="hidden md:inline">Синхронизация DiscoPanel</span>
+                    </label>
                   </div>
-                  <p class="text-[11px] text-slate-400">Загрузка .jar модов, которые нужны только игрокам</p>
+
+                  <!-- Upload Mod Button -->
                   <div>
                     <input type="file" id="modFile_${s.id}" multiple accept=".jar" class="hidden" onchange="uploadClientMods('${s.id}', this.files)">
-                    <button onclick="document.getElementById('modFile_${s.id}').click()" class="w-full py-2 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/30 text-cyan-300 text-xs font-bold flex items-center justify-center gap-2 transition-all">
-                      <i class="fa-solid fa-plus text-[10px]"></i> Загрузить .jar
+                    <button onclick="document.getElementById('modFile_${s.id}').click()" class="w-full sm:w-auto px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md">
+                      <i class="fa-solid fa-plus text-xs"></i>
+                      <span>Загрузить клиентский .jar</span>
                     </button>
                   </div>
                 </div>
 
-                <!-- Shaders Card -->
-                <div class="p-4 rounded-xl bg-[#0b0c11] border border-[#1a1d2b] flex flex-col justify-between space-y-3">
-                  <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2 text-amber-400 font-bold text-xs">
+                <!-- Mods Table / List -->
+                ${s.modsList.length === 0 ? `
+                  <div class="p-8 text-center bg-[#0b0c11] border border-dashed border-[#1a1d2b] rounded-xl text-xs text-slate-500">
+                    В папке сервера пока нет модов (.jar). Нажмите «Загрузить клиентский .jar» или включите синхронизацию с DiscoPanel.
+                  </div>
+                ` : `
+                  <div class="bg-[#0b0c11] border border-[#1a1d2b] rounded-xl overflow-hidden">
+                    <div class="max-h-[380px] overflow-y-auto divide-y divide-[#151724]">
+                      ${s.modsList.map(m => `
+                        <div id="modRow_${s.id}_${encodeURIComponent(m.name)}" data-name="${m.name.toLowerCase()}" class="flex items-center justify-between p-3 hover:bg-[#121520] transition-colors gap-3">
+                          
+                          <!-- Switch + Name -->
+                          <div class="flex items-center gap-3 min-w-0">
+                            <!-- Toggle Switch -->
+                            <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                              <input type="checkbox" ${m.isEnabled ? 'checked' : ''} onchange="toggleMod('${s.id}', '${m.name}', this.checked)" class="sr-only peer">
+                              <div class="w-8 h-4 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3.5 after:transition-all peer-checked:bg-emerald-500"></div>
+                            </label>
+
+                            <!-- Mod icon & Filename -->
+                            <div class="min-w-0">
+                              <div class="text-xs font-medium font-mono text-slate-200 truncate ${!m.isEnabled ? 'line-through text-slate-500' : ''}" id="modTitle_${s.id}_${encodeURIComponent(m.name)}">
+                                ${m.name}
+                              </div>
+                              <div class="text-[10px] text-slate-500 font-sans mt-0.5">
+                                ${m.sizeMb} MB &bull; ${m.isEnabled ? '<span class="text-emerald-400 font-semibold">Включен</span>' : '<span class="text-slate-500">Отключен (не качается игрокам)</span>'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <!-- Badges & Delete -->
+                          <div class="flex items-center gap-2 shrink-0">
+                            ${m.isClient ? `
+                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Клиентский</span>
+                              <button onclick="deleteMod('${s.id}', '${m.name}')" title="Удалить мод" class="p-1 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors">
+                                <i class="fa-solid fa-trash-can text-xs"></i>
+                              </button>
+                            ` : `
+                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">Серверный (DiscoPanel)</span>
+                            `}
+                          </div>
+
+                        </div>
+                      `).join('')}
+                    </div>
+                  </div>
+                `}
+
+              </div>
+
+              <!-- ================= TAB: SHADERS ================= -->
+              <div id="srvTab_${s.id}_shaders" class="hidden space-y-4">
+                <div class="flex items-center justify-between bg-[#0b0c11] border border-[#1a1d2b] p-3.5 rounded-xl">
+                  <div>
+                    <div class="text-xs font-bold text-amber-400 flex items-center gap-2">
                       <i class="fa-solid fa-sun"></i>
                       <span>Шейдеры (shaderpacks)</span>
                     </div>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 font-mono font-bold">${s.shadersList.length}</span>
+                    <p class="text-[11px] text-slate-400 mt-0.5">Архивы .zip для Oculus/Iris/OptiFine, автоматически скачиваются игрокам</p>
                   </div>
-                  <p class="text-[11px] text-slate-400">Архивы .zip для Oculus/Iris/OptiFine</p>
                   <div>
                     <input type="file" id="shaderFile_${s.id}" multiple accept=".zip" class="hidden" onchange="uploadShaders('${s.id}', this.files)">
-                    <button onclick="document.getElementById('shaderFile_${s.id}').click()" class="w-full py-2 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center justify-center gap-2 transition-all">
-                      <i class="fa-solid fa-plus text-[10px]"></i> Загрузить .zip
+                    <button onclick="document.getElementById('shaderFile_${s.id}').click()" class="px-4 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center gap-2 transition-all">
+                      <i class="fa-solid fa-plus text-xs"></i>
+                      <span>Загрузить .zip</span>
                     </button>
                   </div>
                 </div>
 
-                <!-- Resourcepacks Card -->
-                <div class="p-4 rounded-xl bg-[#0b0c11] border border-[#1a1d2b] flex flex-col justify-between space-y-3">
-                  <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2 text-emerald-400 font-bold text-xs">
-                      <i class="fa-solid fa-palette"></i>
-                      <span>Ресурспаки</span>
-                    </div>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 font-mono font-bold">${s.resourcepacksList.length}</span>
+                ${s.shadersList.length === 0 ? `
+                  <div class="p-6 text-center bg-[#0b0c11] border border-dashed border-[#1a1d2b] rounded-xl text-xs text-slate-500">
+                    Шейдеры не загружены. Нажмите «Загрузить .zip» выше.
                   </div>
-                  <p class="text-[11px] text-slate-400">Архивы .zip текстур и звуков для игры</p>
-                  <div>
-                    <input type="file" id="rpFile_${s.id}" multiple accept=".zip" class="hidden" onchange="uploadResourcepacks('${s.id}', this.files)">
-                    <button onclick="document.getElementById('rpFile_${s.id}').click()" class="w-full py-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center justify-center gap-2 transition-all">
-                      <i class="fa-solid fa-plus text-[10px]"></i> Загрузить .zip
-                    </button>
+                ` : `
+                  <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                    ${s.shadersList.map(sh => `
+                      <div class="flex items-center justify-between p-3 rounded-xl bg-[#0b0c11] border border-[#1a1d2b]">
+                        <div class="flex items-center gap-2 min-w-0">
+                          <i class="fa-solid fa-sun text-amber-400 text-xs"></i>
+                          <div class="truncate text-xs font-mono text-slate-200">${sh.name}</div>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 font-sans">${sh.sizeMb}MB</span>
+                          <button onclick="deleteShader('${s.id}', '${sh.name}')" title="Удалить" class="text-slate-500 hover:text-red-400 transition-colors p-1">
+                            <i class="fa-solid fa-trash-can text-xs"></i>
+                          </button>
+                        </div>
+                      </div>
+                    `).join('')}
                   </div>
-                </div>
-
+                `}
               </div>
 
-              <!-- Files Lists (Shaders & Resourcepacks) -->
-              ${s.shadersList.length > 0 ? `
-                <div class="space-y-1.5">
-                  <div class="text-[11px] font-bold text-slate-400">Загруженные шейдеры:</div>
-                  <div class="flex flex-wrap gap-2">
-                    ${s.shadersList.map(sh => `
-                      <div class="flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-mono bg-amber-950/20 border border-amber-900/40 text-amber-200">
-                        <i class="fa-solid fa-sun text-[10px] text-amber-400"></i>
-                        <span class="truncate max-w-[200px]">${sh.name}</span>
-                        <span class="text-[9px] px-1 rounded bg-amber-500/20 text-amber-300 font-sans">${sh.sizeMb}MB</span>
-                        <button onclick="deleteShader('${s.id}', '${sh.name}')" title="Удалить" class="text-slate-500 hover:text-red-400 transition-colors ml-1">
-                          <i class="fa-solid fa-xmark text-xs"></i>
-                        </button>
-                      </div>
-                    `).join('')}
+              <!-- ================= TAB: RESOURCEPACKS ================= -->
+              <div id="srvTab_${s.id}_resourcepacks" class="hidden space-y-4">
+                <div class="flex items-center justify-between bg-[#0b0c11] border border-[#1a1d2b] p-3.5 rounded-xl">
+                  <div>
+                    <div class="text-xs font-bold text-emerald-400 flex items-center gap-2">
+                      <i class="fa-solid fa-palette"></i>
+                      <span>Ресурспаки (resourcepacks)</span>
+                    </div>
+                    <p class="text-[11px] text-slate-400 mt-0.5">Архивы .zip текстур и звуков, автоматически скачиваются в папку игры игрока</p>
+                  </div>
+                  <div>
+                    <input type="file" id="rpFile_${s.id}" multiple accept=".zip" class="hidden" onchange="uploadResourcepacks('${s.id}', this.files)">
+                    <button onclick="document.getElementById('rpFile_${s.id}').click()" class="px-4 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-2 transition-all">
+                      <i class="fa-solid fa-plus text-xs"></i>
+                      <span>Загрузить .zip</span>
+                    </button>
                   </div>
                 </div>
-              ` : ''}
 
-              ${s.resourcepacksList.length > 0 ? `
-                <div class="space-y-1.5">
-                  <div class="text-[11px] font-bold text-slate-400">Загруженные ресурспаки:</div>
-                  <div class="flex flex-wrap gap-2">
+                ${s.resourcepacksList.length === 0 ? `
+                  <div class="p-6 text-center bg-[#0b0c11] border border-dashed border-[#1a1d2b] rounded-xl text-xs text-slate-500">
+                    Ресурспаки не загружены. Нажмите «Загрузить .zip» выше.
+                  </div>
+                ` : `
+                  <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
                     ${s.resourcepacksList.map(rp => `
-                      <div class="flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-mono bg-emerald-950/20 border border-emerald-900/40 text-emerald-200">
-                        <i class="fa-solid fa-palette text-[10px] text-emerald-400"></i>
-                        <span class="truncate max-w-[200px]">${rp.name}</span>
-                        <span class="text-[9px] px-1 rounded bg-emerald-500/20 text-emerald-300 font-sans">${rp.sizeMb}MB</span>
-                        <button onclick="deleteResourcepack('${s.id}', '${rp.name}')" title="Удалить" class="text-slate-500 hover:text-red-400 transition-colors ml-1">
-                          <i class="fa-solid fa-xmark text-xs"></i>
-                        </button>
+                      <div class="flex items-center justify-between p-3 rounded-xl bg-[#0b0c11] border border-[#1a1d2b]">
+                        <div class="flex items-center gap-2 min-w-0">
+                          <i class="fa-solid fa-palette text-emerald-400 text-xs"></i>
+                          <div class="truncate text-xs font-mono text-slate-200">${rp.name}</div>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 font-sans">${rp.sizeMb}MB</span>
+                          <button onclick="deleteResourcepack('${s.id}', '${rp.name}')" title="Удалить" class="text-slate-500 hover:text-red-400 transition-colors p-1">
+                            <i class="fa-solid fa-trash-can text-xs"></i>
+                          </button>
+                        </div>
                       </div>
                     `).join('')}
                   </div>
+                `}
+              </div>
+
+              <!-- ================= TAB: HOST ================= -->
+              <div id="srvTab_${s.id}_host" class="hidden space-y-4">
+                <div class="p-4 rounded-xl bg-[#0b0c11] border border-[#1a1d2b] space-y-3">
+                  <div>
+                    <span class="text-xs font-bold text-white flex items-center gap-1.5">
+                      <i class="fa-solid fa-globe text-cyan-400"></i>
+                      Публичный адрес игрового сервера (Домен или внешний IP)
+                    </span>
+                    <p class="text-[11px] text-slate-400 mt-0.5">По этому адресу лаунчер игроков подключается к серверу: <code class="text-cyan-300 font-mono font-bold">${s.ip}:${s.port}</code></p>
+                  </div>
+                  <div class="flex items-center gap-2 max-w-md">
+                    <input type="text" id="hostInput_${s.id}" value="${s.publicHost || ''}" placeholder="например: mc.example.com" class="flex-1 bg-[#12141c] border border-slate-700 rounded-lg px-3.5 py-2 text-xs text-cyan-300 font-mono focus:border-indigo-500 focus:outline-none">
+                    <button onclick="savePublicHost('${s.id}')" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shrink-0">
+                      Сохранить
+                    </button>
+                  </div>
                 </div>
-              ` : ''}
+              </div>
 
             </div>
 
@@ -1407,6 +1529,31 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       });
     }
 
+    function filterModRows(serverId, query) {
+      const q = (query || '').toLowerCase().trim();
+      const rows = document.querySelectorAll('#srvTab_' + serverId + '_mods [id^="modRow_' + serverId + '_"]');
+      rows.forEach(r => {
+        const name = r.getAttribute('data-name') || '';
+        r.style.display = name.includes(q) ? '' : 'none';
+      });
+    }
+
+    function switchServerTab(serverId, tab) {
+      const tabs = ['mods', 'shaders', 'resourcepacks', 'host'];
+      tabs.forEach(t => {
+        const pane = document.getElementById('srvTab_' + serverId + '_' + t);
+        const btn = document.getElementById('srvTabBtn_' + serverId + '_' + t);
+        if (pane) pane.classList.toggle('hidden', t !== tab);
+        if (btn) {
+          if (t === tab) {
+            btn.className = "px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 bg-indigo-600 text-white shadow-sm transition-all";
+          } else {
+            btn.className = "px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-[#12141c] hover:bg-[#1a1d28] transition-all flex items-center gap-1.5";
+          }
+        }
+      });
+    }
+
     function scrollToServer(serverId) {
       switchNav('servers');
       const card = document.getElementById('serverCard_' + serverId);
@@ -1427,6 +1574,43 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
           arrow.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
         }
       }
+    }
+
+    async function toggleMod(serverId, filename, enabled) {
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/toggle-mod', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename, enabled })
+        });
+        const d = await res.json();
+        if (!d.success) {
+          alert('Ошибка переключения мода: ' + (d.error || 'Ошибка'));
+        } else {
+          const rowTitle = document.getElementById('modTitle_' + serverId + '_' + encodeURIComponent(filename));
+          if (rowTitle) {
+            if (enabled) {
+              rowTitle.classList.remove('line-through', 'text-slate-500');
+              rowTitle.classList.add('text-slate-200');
+            } else {
+              rowTitle.classList.add('line-through', 'text-slate-500');
+              rowTitle.classList.remove('text-slate-200');
+            }
+          }
+        }
+      } catch (err) {
+        alert('Ошибка сети: ' + err.message);
+      }
+    }
+
+    async function toggleSync(serverId, enabled) {
+      try {
+        await fetch('/api/admin/servers/' + serverId + '/toggle-sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled })
+        });
+      } catch (e) {}
     }
 
     async function logoutAdmin() {
@@ -1551,10 +1735,10 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
           alert('Успешно загружено шейдеров: ' + d.count);
           window.location.reload();
         } else {
-          alert('Ошибка: ' + (d.error || 'Ошибка'));
+          alert('Ошибка загрузки: ' + (d.error || 'Ошибка'));
         }
       } catch (err) {
-        alert('Ошибка: ' + err.message);
+        alert('Ошибка загрузки: ' + err.message);
       }
     }
 
@@ -1599,6 +1783,20 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       if (!confirm('Удалить ресурспак "' + filename + '"?')) return;
       try {
         const res = await fetch('/api/admin/servers/' + serverId + '/delete-resourcepack', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename })
+        });
+        const d = await res.json();
+        if (d.success) { window.location.reload(); }
+        else { alert('Ошибка: ' + (d.error || 'Ошибка')); }
+      } catch (err) { alert('Ошибка: ' + err.message); }
+    }
+
+    async function deleteMod(serverId, filename) {
+      if (!confirm('Удалить клиентский мод "' + filename + '"?')) return;
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/delete-mod', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filename })
@@ -1725,6 +1923,31 @@ adminApp.post('/api/admin/servers/:id/toggle-sync', requireAdminAuth, (req, res)
   const { enabled } = req.body;
   setSetting('sync_mods_' + serverId, enabled ? 'true' : 'false');
   res.json({ success: true, enabled: !!enabled });
+});
+
+// Toggle individual mod enabled/disabled
+adminApp.post('/api/admin/servers/:id/toggle-mod', requireAdminAuth, (req, res) => {
+  const serverId = req.params.id;
+  const { filename, enabled } = req.body;
+  if (!filename) return res.status(400).json({ success: false, error: 'Имя файла не указано' });
+
+  const safeFilename = path.basename(filename);
+  const disabledModsPath = path.join(SERVERS_DIR, serverId, 'disabled_mods.json');
+  let disabledMods = [];
+  try {
+    if (fs.existsSync(disabledModsPath)) {
+      disabledMods = JSON.parse(fs.readFileSync(disabledModsPath, 'utf8'));
+    }
+  } catch (e) {}
+
+  if (enabled) {
+    disabledMods = disabledMods.filter(f => f !== safeFilename);
+  } else {
+    if (!disabledMods.includes(safeFilename)) disabledMods.push(safeFilename);
+  }
+
+  fs.writeFileSync(disabledModsPath, JSON.stringify(disabledMods, null, 2));
+  res.json({ success: true, filename: safeFilename, enabled: !!enabled });
 });
 
 // Upload client-side mods
