@@ -334,9 +334,11 @@ async function syncWithDiscoPanelAPI() {
       if (modsRes.ok) {
         const modsData = await modsRes.json();
         const mods = modsData.mods || [];
+        const dpModFileNames = new Set();
 
         for (const m of mods) {
           if (!m.enabled) continue;
+          dpModFileNames.add(m.fileName);
           const modDest = path.join(modsDir, m.fileName);
 
           // Download via DiscoPanel File API if not exists or different size
@@ -363,6 +365,44 @@ async function syncWithDiscoPanelAPI() {
               }
             }
           }
+        }
+
+        // Clean up server-side mods that are no longer in DiscoPanel
+        const clientModsFile = path.join(srvDir, 'client_mods.json');
+        let clientMods = [];
+        try {
+          if (fs.existsSync(clientModsFile)) {
+            clientMods = JSON.parse(fs.readFileSync(clientModsFile, 'utf8'));
+          }
+        } catch (e) {}
+        const clientModsSet = new Set(clientMods);
+
+        const disabledModsFile = path.join(srvDir, 'disabled_mods.json');
+        let disabledMods = [];
+        try {
+          if (fs.existsSync(disabledModsFile)) {
+            disabledMods = JSON.parse(fs.readFileSync(disabledModsFile, 'utf8'));
+          }
+        } catch (e) {}
+
+        const allLocalMods = fs.existsSync(modsDir) ? fs.readdirSync(modsDir).filter(f => f.endsWith('.jar')) : [];
+        let disabledModsChanged = false;
+        for (const localMod of allLocalMods) {
+          if (!clientModsSet.has(localMod) && !dpModFileNames.has(localMod)) {
+            console.log(`[Sync] Deleting obsolete/removed DiscoPanel mod: ${localMod}`);
+            try {
+              fs.unlinkSync(path.join(modsDir, localMod));
+              if (disabledMods.includes(localMod)) {
+                disabledMods = disabledMods.filter(f => f !== localMod);
+                disabledModsChanged = true;
+              }
+            } catch (e) {
+              console.warn(`[Sync] Failed to unlink ${localMod}:`, e.message);
+            }
+          }
+        }
+        if (disabledModsChanged) {
+          try { fs.writeFileSync(disabledModsFile, JSON.stringify(disabledMods, null, 2)); } catch(e) {}
         }
       }
     } else {
@@ -1178,12 +1218,12 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                           <div class="flex items-center gap-2 shrink-0">
                             ${m.isClient ? `
                               <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Client-side</span>
-                              <button onclick="deleteMod('${s.id}', '${m.name}')" title="Delete mod" class="p-1 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors">
-                                <i class="fa-solid fa-trash-can text-xs"></i>
-                              </button>
                             ` : `
                               <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">Server-side (DiscoPanel)</span>
                             `}
+                            <button onclick="deleteMod('${s.id}', '${m.name}')" title="Delete mod" class="p-1 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors">
+                              <i class="fa-solid fa-trash-can text-xs"></i>
+                            </button>
                           </div>
 
                         </div>
