@@ -820,7 +820,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                     <span class="text-lg font-black text-white">${s.name}</span>
                     <span class="px-2 py-0.5 rounded-lg bg-indigo-500/20 text-indigo-300 text-xs font-mono font-bold">${s.version} (${s.modloader})</span>
                     <span class="px-2 py-0.5 rounded-lg bg-slate-800 text-slate-300 text-xs font-mono">${s.ip}:${s.port}</span>
-                    <span class="px-2 py-0.5 rounded-lg bg-slate-800 text-slate-400 text-xs font-mono">0 / ${s.maxOnline} слотов</span>
+                    <span class="px-2 py-0.5 rounded-lg bg-slate-800 text-slate-300 text-xs font-mono"><b class="text-emerald-400 font-bold">${s.online || 0}</b> / ${s.maxOnline} слотов</span>
                   </div>
                   <p class="text-xs text-slate-400 mt-1">${s.description || ''}</p>
                 </div>
