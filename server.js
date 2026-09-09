@@ -120,7 +120,7 @@ function requireAdminAuth(req, res, next) {
 
   if (!token) {
     if (req.path.startsWith('/api/')) {
-      return res.status(401).json({ success: false, error: 'Требуется авторизация' });
+      return res.status(401).json({ success: false, error: 'Authentication required' });
     }
     return res.redirect('/login');
   }
@@ -134,7 +134,7 @@ function requireAdminAuth(req, res, next) {
   } catch (err) {}
 
   if (req.path.startsWith('/api/')) {
-    return res.status(401).json({ success: false, error: 'Сессия истекла' });
+    return res.status(401).json({ success: false, error: 'Session expired' });
   }
   return res.redirect('/login');
 }
@@ -143,10 +143,10 @@ function requireAdminAuth(req, res, next) {
 function authenticatePlayerToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'Требуется токен авторизации' });
+  if (!token) return res.status(401).json({ error: 'Authorization token required' });
 
   jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err) return res.status(403).json({ error: 'Недействительный токен' });
+    if (err) return res.status(403).json({ error: 'Invalid token' });
     req.user = decoded;
     next();
   });
@@ -291,7 +291,7 @@ async function syncWithDiscoPanelAPI() {
   const dpUrl = getSetting('discopanel_url', 'http://192.168.10.127:8080');
   const dpToken = getSetting('discopanel_token');
 
-  if (!dpToken) throw new Error('API токен DiscoPanel не настроен!');
+  if (!dpToken) throw new Error('DiscoPanel API token not configured!');
 
   // 1. Fetch servers list via ConnectRPC
   const serversRes = await fetch(`${dpUrl}/discopanel.v1.ServerService/ListServers`, {
@@ -304,7 +304,7 @@ async function syncWithDiscoPanelAPI() {
   });
 
   if (!serversRes.ok) {
-    throw new Error(`Ошибка DiscoPanel API (${serversRes.status}): ${await serversRes.text()}`);
+    throw new Error(`DiscoPanel API error (${serversRes.status}): ${await serversRes.text()}`);
   }
 
   const serversData = await serversRes.json();
@@ -403,7 +403,7 @@ async function syncWithDiscoPanelAPI() {
     `).run(
       srvId,
       s.name,
-      'Сервер из DiscoPanel',
+      'DiscoPanel Server',
       s.mcVersion || '1.21.5',
       modLoaderClean,
       serverHost,
@@ -411,7 +411,7 @@ async function syncWithDiscoPanelAPI() {
       realOnline,
       s.maxPlayers || 100,
       isRunning ? 'online' : 'offline',
-      s.description || 'Игровой сервер DiscoPanel',
+      s.description || 'DiscoPanel Game Server',
       modCount,
       `/api/servers/${srvId}/manifest`
     );
@@ -456,11 +456,11 @@ launcherApp.get('/', (req, res) => {
 launcherApp.post('/api/auth/register', async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: 'Логин и пароль обязательны' });
-    if (username.length < 3 || username.length > 16) return res.status(400).json({ error: 'Длина ника от 3 до 16 символов' });
+    if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
+    if (username.length < 3 || username.length > 16) return res.status(400).json({ error: 'Username length must be between 3 and 16 characters' });
 
     const existing = db.prepare('SELECT id FROM users WHERE lower(username) = lower(?)').get(username);
-    if (existing) return res.status(409).json({ error: 'Пользователь с таким ником уже существует' });
+    if (existing) return res.status(409).json({ error: 'User with this username already exists' });
 
     const salt = await bcrypt.genSalt(10);
     const hash = await bcrypt.hash(password, salt);
@@ -483,13 +483,13 @@ launcherApp.post('/api/auth/register', async (req, res) => {
 launcherApp.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: 'Введите логин и пароль' });
+    if (!username || !password) return res.status(400).json({ error: 'Please enter username and password' });
 
     const user = db.prepare('SELECT * FROM users WHERE lower(username) = lower(?)').get(username);
-    if (!user) return res.status(401).json({ error: 'Неверный логин или пароль' });
+    if (!user) return res.status(401).json({ error: 'Invalid username or password' });
 
     const match = await bcrypt.compare(password, user.password_hash);
-    if (!match) return res.status(401).json({ error: 'Неверный логин или пароль' });
+    if (!match) return res.status(401).json({ error: 'Invalid username or password' });
 
     const profile = {
       id: user.id,
@@ -604,11 +604,11 @@ adminApp.get('/login', (req, res) => {
 
   const currentAdminUser = getAdminCredentials().username;
   const html = `<!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Вход в панель управления - DiscoLauncher</title>
+  <title>Sign In - DiscoPanel</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
@@ -626,18 +626,18 @@ adminApp.get('/login', (req, res) => {
         <div class="w-16 h-16 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-2xl text-indigo-400 mx-auto mb-4 shadow-lg shadow-indigo-600/20">
           <i class="fa-solid fa-shield-halved"></i>
         </div>
-        <h1 class="text-2xl font-black text-white tracking-wide">Панель управления</h1>
-        <p class="text-xs text-slate-400 mt-1">Авторизуйтесь для доступа к управлению серверами</p>
+        <h1 class="text-2xl font-black text-white tracking-wide">Control Panel</h1>
+        <p class="text-xs text-slate-400 mt-1">Sign in to access server management</p>
       </div>
 
       <form id="loginForm" onsubmit="handleLogin(event)" class="space-y-4 relative">
         <div id="errorBox" class="hidden p-3 rounded-xl bg-red-950/50 border border-red-800/60 text-xs text-red-300 flex items-center gap-2">
           <i class="fa-solid fa-triangle-exclamation text-red-400"></i>
-          <span id="errorMsg">Неверный логин или пароль</span>
+          <span id="errorMsg">Invalid username or password</span>
         </div>
 
         <div>
-          <label class="block text-xs font-semibold text-slate-300 mb-1.5">Логин</label>
+          <label class="block text-xs font-semibold text-slate-300 mb-1.5">Username</label>
           <div class="relative">
             <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
               <i class="fa-solid fa-user text-xs"></i>
@@ -648,7 +648,7 @@ adminApp.get('/login', (req, res) => {
         </div>
 
         <div>
-          <label class="block text-xs font-semibold text-slate-300 mb-1.5">Пароль</label>
+          <label class="block text-xs font-semibold text-slate-300 mb-1.5">Password</label>
           <div class="relative">
             <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
               <i class="fa-solid fa-lock text-xs"></i>
@@ -660,7 +660,7 @@ adminApp.get('/login', (req, res) => {
 
         <button type="submit" id="submitBtn"
           class="w-full mt-2 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2">
-          <span>Войти</span>
+          <span>Sign In</span>
           <i class="fa-solid fa-arrow-right text-xs"></i>
         </button>
       </form>
@@ -690,11 +690,11 @@ adminApp.get('/login', (req, res) => {
           try { localStorage.setItem('admin_token', data.token); } catch(e) {}
           window.location.href = '/admin';
         } else {
-          errText.textContent = data.error || 'Неверный логин или пароль';
+          errText.textContent = data.error || 'Invalid username or password';
           errBox.classList.remove('hidden');
         }
       } catch (err) {
-        errText.textContent = 'Ошибка сети: ' + err.message;
+        errText.textContent = 'Network error: ' + err.message;
         errBox.classList.remove('hidden');
       } finally {
         btn.disabled = false;
@@ -730,16 +730,16 @@ adminApp.post('/api/login', (req, res) => {
     res.setHeader('Set-Cookie', `admin_token=${token}; HttpOnly; Path=/; Max-Age=7776000; SameSite=Lax`);
     return res.json({ success: true, token });
   }
-  return res.status(401).json({ success: false, error: 'Неверный логин или пароль' });
+  return res.status(401).json({ success: false, error: 'Invalid username or password' });
 });
 
 adminApp.post('/api/admin/change-credentials', requireAdminAuth, (req, res) => {
   const { currentPassword, newUsername, newPassword } = req.body;
   if (!newUsername || !newUsername.trim()) {
-    return res.status(400).json({ success: false, error: 'Логин не может быть пустым' });
+    return res.status(400).json({ success: false, error: 'Username cannot be empty' });
   }
   if (!newPassword || newPassword.length < 4) {
-    return res.status(400).json({ success: false, error: 'Новый пароль должен быть не менее 4 символов' });
+    return res.status(400).json({ success: false, error: 'Password must be at least 4 characters' });
   }
 
   const adminCreds = getAdminCredentials();
@@ -755,7 +755,7 @@ adminApp.post('/api/admin/change-credentials', requireAdminAuth, (req, res) => {
   }
 
   if (!isCurrentValid) {
-    return res.status(400).json({ success: false, error: 'Текущий пароль указан неверно' });
+    return res.status(400).json({ success: false, error: 'Current password is incorrect' });
   }
 
   const cleanUser = newUsername.trim();
@@ -767,7 +767,7 @@ adminApp.post('/api/admin/change-credentials', requireAdminAuth, (req, res) => {
   const token = jwt.sign({ role: 'admin', user: cleanUser }, JWT_SECRET, { expiresIn: '90d' });
   res.setHeader('Set-Cookie', `admin_token=${token}; HttpOnly; Path=/; Max-Age=7776000; SameSite=Lax`);
 
-  return res.json({ success: true, message: 'Данные администратора успешно изменены' });
+  return res.json({ success: true, message: 'Credentials updated successfully' });
 });
 
 adminApp.post('/api/logout', (req, res) => {
@@ -867,11 +867,11 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
   const adminInitials = (currentAdminUser || 'AD').substring(0, 2).toUpperCase();
 
   const html = `<!DOCTYPE html>
-<html lang="ru" class="dark">
+<html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DiscoPanel - Серверы и Модпаки</title>
+  <title>DiscoPanel - Servers & Modpacks</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -969,10 +969,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
             </div>
           </div>
           <div class="flex items-center gap-1 shrink-0">
-            <button onclick="openCredentialsModal()" title="Сменить логин или пароль" class="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors">
-              <i class="fa-solid fa-key text-xs"></i>
-            </button>
-            <button onclick="logoutAdmin()" title="Выйти" class="p-1.5 rounded-lg hover:bg-red-950/40 text-slate-400 hover:text-red-400 transition-colors">
+            <button onclick="logoutAdmin()" title="Log Out" class="p-1.5 rounded-lg hover:bg-red-950/40 text-slate-400 hover:text-red-400 transition-colors">
               <i class="fa-solid fa-right-from-bracket text-xs"></i>
             </button>
           </div>
@@ -1001,7 +998,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
           </div>
           <div>
             <h1 class="text-xl font-black text-white tracking-tight">Servers</h1>
-            <p class="text-xs text-slate-400">Нажмите на сервер для управления модами, шейдерами и настройками</p>
+            <p class="text-xs text-slate-400">Click a server to manage mods, shaders, and configurations</p>
           </div>
         </div>
       </div>
@@ -1010,7 +1007,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
         <div class="relative flex-1 max-w-md">
           <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 text-xs"></i>
-          <input type="text" id="serverSearchInput" oninput="filterServers(this.value)" placeholder="Search by name, version, or mod loader.." class="w-full bg-[#11131a] border border-[#1d202c] rounded-xl pl-9 pr-4 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500/60 font-sans transition-all">
+          <input type="text" id="serverSearchInput" oninput="filterServers(this.value)" placeholder="Search by name, version, or mod loader..." class="w-full bg-[#11131a] border border-[#1d202c] rounded-xl pl-9 pr-4 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500/60 font-sans transition-all">
         </div>
 
         <div class="flex items-center gap-4 text-xs font-semibold text-slate-400 px-2">
@@ -1040,7 +1037,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                   <div class="flex items-center gap-2">
                     <h3 class="text-base font-bold text-white group-hover:text-blue-300 tracking-tight transition-colors">${s.name}</h3>
                   </div>
-                  <p class="text-xs text-slate-400 mt-0.5">${s.description || 'Minecraft сервер без описания'}</p>
+                  <p class="text-xs text-slate-400 mt-0.5">${s.description || 'Minecraft server'}</p>
                 </div>
               </div>
 
@@ -1054,7 +1051,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                 <span class="px-2.5 py-1 rounded-lg bg-[#181b26] border border-[#222738] text-slate-300 text-xs font-mono font-medium capitalize">${s.modloader}</span>
 
                 <div class="ml-2 px-3 py-1 rounded-lg bg-[#161822] group-hover:bg-[#202434] border border-[#232738] text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition-all">
-                  <span>Моды и файлы</span>
+                  <span>Mods & Files</span>
                   <i id="toggleArrow_${s.id}" class="fa-solid fa-chevron-down text-[10px] ml-1 transition-transform"></i>
                 </div>
               </div>
@@ -1074,7 +1071,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                   <i class="fa-solid fa-puzzle-piece text-cyan-400"></i> MODS
                 </div>
                 <div class="text-sm font-bold font-mono mt-1">
-                  <span class="text-cyan-400 font-bold">${s.enabledModsCount}</span> <span class="text-slate-500 text-xs">/ ${s.totalMods} вкл.</span>
+                  <span class="text-cyan-400 font-bold">${s.enabledModsCount}</span> <span class="text-slate-500 text-xs">/ ${s.totalMods} enabled</span>
                 </div>
               </div>
 
@@ -1102,22 +1099,22 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
               <div class="flex items-center gap-2 border-b border-[#1f2232] pb-2">
                 <button onclick="switchServerTab('${s.id}', 'mods')" id="srvTabBtn_${s.id}_mods" class="px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 bg-indigo-600 text-white shadow-sm transition-all">
                   <i class="fa-solid fa-puzzle-piece"></i>
-                  <span>Моды</span>
+                  <span>Mods</span>
                   <span class="px-1.5 py-0.2 rounded bg-indigo-500/40 text-[10px] font-mono">${s.totalMods}</span>
                 </button>
                 <button onclick="switchServerTab('${s.id}', 'shaders')" id="srvTabBtn_${s.id}_shaders" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-[#12141c] hover:bg-[#1a1d28] transition-all flex items-center gap-1.5">
                   <i class="fa-solid fa-sun text-amber-400"></i>
-                  <span>Шейдеры</span>
+                  <span>Shaders</span>
                   <span class="text-[10px] text-slate-500 font-mono">${s.shadersList.length}</span>
                 </button>
                 <button onclick="switchServerTab('${s.id}', 'resourcepacks')" id="srvTabBtn_${s.id}_resourcepacks" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-[#12141c] hover:bg-[#1a1d28] transition-all flex items-center gap-1.5">
                   <i class="fa-solid fa-palette text-emerald-400"></i>
-                  <span>Ресурспаки</span>
+                  <span>Resourcepacks</span>
                   <span class="text-[10px] text-slate-500 font-mono">${s.resourcepacksList.length}</span>
                 </button>
                 <button onclick="switchServerTab('${s.id}', 'host')" id="srvTabBtn_${s.id}_host" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-[#12141c] hover:bg-[#1a1d28] transition-all flex items-center gap-1.5">
                   <i class="fa-solid fa-globe text-cyan-400"></i>
-                  <span>Адрес сервера</span>
+                  <span>Server Address</span>
                 </button>
               </div>
 
@@ -1130,7 +1127,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                     <!-- Quick Mod Search -->
                     <div class="relative w-full sm:w-64">
                       <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs"></i>
-                      <input type="text" oninput="filterModRows('${s.id}', this.value)" placeholder="Поиск мода..." class="w-full bg-[#12141c] border border-slate-700/80 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-sans">
+                      <input type="text" oninput="filterModRows('${s.id}', this.value)" placeholder="Search mods..." class="w-full bg-[#12141c] border border-slate-700/80 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-sans">
                     </div>
                   </div>
 
@@ -1139,7 +1136,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                     <input type="file" id="modFile_${s.id}" multiple accept=".jar" class="hidden" onchange="uploadClientMods('${s.id}', this.files)">
                     <button onclick="document.getElementById('modFile_${s.id}').click()" class="w-full sm:w-auto px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md">
                       <i class="fa-solid fa-plus text-xs"></i>
-                      <span>Загрузить клиентский .jar</span>
+                      <span>Upload client .jar</span>
                     </button>
                   </div>
                 </div>
@@ -1147,7 +1144,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                 <!-- Mods Table / List -->
                 ${s.modsList.length === 0 ? `
                   <div class="p-8 text-center bg-[#0b0c11] border border-dashed border-[#1a1d2b] rounded-xl text-xs text-slate-500">
-                    В папке сервера пока нет модов (.jar). Нажмите «Загрузить клиентский .jar» или включите синхронизацию с DiscoPanel.
+                    No mod files (.jar) found. Click "Upload client .jar" or enable sync with DiscoPanel.
                   </div>
                 ` : `
                   <div class="bg-[#0b0c11] border border-[#1a1d2b] rounded-xl overflow-hidden">
@@ -1169,7 +1166,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                                 ${m.name}
                               </div>
                               <div class="text-[10px] text-slate-500 font-sans mt-0.5">
-                                ${m.sizeMb} MB &bull; ${m.isEnabled ? '<span class="text-emerald-400 font-semibold">Включен</span>' : '<span class="text-slate-500">Отключен (не качается игрокам)</span>'}
+                                ${m.sizeMb} MB &bull; ${m.isEnabled ? '<span class="text-emerald-400 font-semibold">Enabled</span>' : '<span class="text-slate-500">Disabled (not downloaded to players)</span>'}
                               </div>
                             </div>
                           </div>
@@ -1177,12 +1174,12 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                           <!-- Badges & Delete -->
                           <div class="flex items-center gap-2 shrink-0">
                             ${m.isClient ? `
-                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Клиентский</span>
-                              <button onclick="deleteMod('${s.id}', '${m.name}')" title="Удалить мод" class="p-1 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors">
+                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Client-side</span>
+                              <button onclick="deleteMod('${s.id}', '${m.name}')" title="Delete mod" class="p-1 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors">
                                 <i class="fa-solid fa-trash-can text-xs"></i>
                               </button>
                             ` : `
-                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">Серверный (DiscoPanel)</span>
+                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">Server-side (DiscoPanel)</span>
                             `}
                           </div>
 
@@ -1200,22 +1197,22 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                   <div>
                     <div class="text-xs font-bold text-amber-400 flex items-center gap-2">
                       <i class="fa-solid fa-sun"></i>
-                      <span>Шейдеры (shaderpacks)</span>
+                      <span>Shaders (shaderpacks)</span>
                     </div>
-                    <p class="text-[11px] text-slate-400 mt-0.5">Архивы .zip для Oculus/Iris/OptiFine, автоматически скачиваются игрокам</p>
+                    <p class="text-[11px] text-slate-400 mt-0.5">.zip archives for Oculus/Iris/OptiFine, automatically downloaded to players</p>
                   </div>
                   <div>
                     <input type="file" id="shaderFile_${s.id}" multiple accept=".zip" class="hidden" onchange="uploadShaders('${s.id}', this.files)">
                     <button onclick="document.getElementById('shaderFile_${s.id}').click()" class="px-4 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center gap-2 transition-all">
                       <i class="fa-solid fa-plus text-xs"></i>
-                      <span>Загрузить .zip</span>
+                      <span>Upload .zip</span>
                     </button>
                   </div>
                 </div>
 
                 ${s.shadersList.length === 0 ? `
                   <div class="p-6 text-center bg-[#0b0c11] border border-dashed border-[#1a1d2b] rounded-xl text-xs text-slate-500">
-                    Шейдеры не загружены. Нажмите «Загрузить .zip» выше.
+                    No shaders uploaded yet. Click "Upload .zip" above.
                   </div>
                 ` : `
                   <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
@@ -1227,7 +1224,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                         </div>
                         <div class="flex items-center gap-2 shrink-0">
                           <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 font-sans">${sh.sizeMb}MB</span>
-                          <button onclick="deleteShader('${s.id}', '${sh.name}')" title="Удалить" class="text-slate-500 hover:text-red-400 transition-colors p-1">
+                          <button onclick="deleteShader('${s.id}', '${sh.name}')" title="Delete" class="text-slate-500 hover:text-red-400 transition-colors p-1">
                             <i class="fa-solid fa-trash-can text-xs"></i>
                           </button>
                         </div>
@@ -1243,22 +1240,22 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                   <div>
                     <div class="text-xs font-bold text-emerald-400 flex items-center gap-2">
                       <i class="fa-solid fa-palette"></i>
-                      <span>Ресурспаки (resourcepacks)</span>
+                      <span>Resourcepacks (resourcepacks)</span>
                     </div>
-                    <p class="text-[11px] text-slate-400 mt-0.5">Архивы .zip текстур и звуков, автоматически скачиваются в папку игры игрока</p>
+                    <p class="text-[11px] text-slate-400 mt-0.5">.zip texture and audio archives, automatically downloaded to player game folder</p>
                   </div>
                   <div>
                     <input type="file" id="rpFile_${s.id}" multiple accept=".zip" class="hidden" onchange="uploadResourcepacks('${s.id}', this.files)">
                     <button onclick="document.getElementById('rpFile_${s.id}').click()" class="px-4 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-2 transition-all">
                       <i class="fa-solid fa-plus text-xs"></i>
-                      <span>Загрузить .zip</span>
+                      <span>Upload .zip</span>
                     </button>
                   </div>
                 </div>
 
                 ${s.resourcepacksList.length === 0 ? `
                   <div class="p-6 text-center bg-[#0b0c11] border border-dashed border-[#1a1d2b] rounded-xl text-xs text-slate-500">
-                    Ресурспаки не загружены. Нажмите «Загрузить .zip» выше.
+                    No resource packs uploaded yet. Click "Upload .zip" above.
                   </div>
                 ` : `
                   <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
@@ -1270,7 +1267,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                         </div>
                         <div class="flex items-center gap-2 shrink-0">
                           <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 font-sans">${rp.sizeMb}MB</span>
-                          <button onclick="deleteResourcepack('${s.id}', '${rp.name}')" title="Удалить" class="text-slate-500 hover:text-red-400 transition-colors p-1">
+                          <button onclick="deleteResourcepack('${s.id}', '${rp.name}')" title="Delete" class="text-slate-500 hover:text-red-400 transition-colors p-1">
                             <i class="fa-solid fa-trash-can text-xs"></i>
                           </button>
                         </div>
@@ -1286,14 +1283,14 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                   <div>
                     <span class="text-xs font-bold text-white flex items-center gap-1.5">
                       <i class="fa-solid fa-globe text-cyan-400"></i>
-                      Публичный адрес игрового сервера (Домен или внешний IP)
+                      Public Server Address (Domain or external IP)
                     </span>
-                    <p class="text-[11px] text-slate-400 mt-0.5">По этому адресу лаунчер игроков подключается к серверу: <code class="text-cyan-300 font-mono font-bold">${s.ip}:${s.port}</code></p>
+                    <p class="text-[11px] text-slate-400 mt-0.5">Players connect to this address from the launcher: <code class="text-cyan-300 font-mono font-bold">${s.ip}:${s.port}</code></p>
                   </div>
                   <div class="flex items-center gap-2 max-w-md">
-                    <input type="text" id="hostInput_${s.id}" value="${s.publicHost || ''}" placeholder="например: mc.example.com" class="flex-1 bg-[#12141c] border border-slate-700 rounded-lg px-3.5 py-2 text-xs text-cyan-300 font-mono focus:border-indigo-500 focus:outline-none">
+                    <input type="text" id="hostInput_${s.id}" value="${s.publicHost || ''}" placeholder="e.g. mc.example.com" class="flex-1 bg-[#12141c] border border-slate-700 rounded-lg px-3.5 py-2 text-xs text-cyan-300 font-mono focus:border-indigo-500 focus:outline-none">
                     <button onclick="savePublicHost('${s.id}')" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shrink-0">
-                      Сохранить
+                      Save
                     </button>
                   </div>
                 </div>
@@ -1311,7 +1308,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
     <div id="section_settings" class="hidden p-8 max-w-5xl w-full mx-auto space-y-6">
       <div class="pb-4 border-b border-[#161822]">
         <h1 class="text-xl font-black text-white tracking-tight">Settings</h1>
-        <p class="text-xs text-slate-400">Конфигурация API лаунчера и привязка к DiscoPanel</p>
+        <p class="text-xs text-slate-400">Launcher API configuration and DiscoPanel integration</p>
       </div>
 
       <!-- Launcher API Connection Card -->
@@ -1322,10 +1319,10 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <h2 class="text-sm font-bold text-white">Адрес API для лаунчера игроков</h2>
-              <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Порт ${LAUNCHER_PORT}</span>
+              <h2 class="text-sm font-bold text-white">Launcher API Address</h2>
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Port ${LAUNCHER_PORT}</span>
             </div>
-            <p class="text-xs text-slate-400 mt-0.5">Укажите эту ссылку в лаунчере: «Настройки» → «Адрес сервера»</p>
+            <p class="text-xs text-slate-400 mt-0.5">Specify this URL in the launcher: Settings → Server Address</p>
           </div>
         </div>
 
@@ -1335,7 +1332,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
           </div>
           <button onclick="copyLauncherUrl()" id="copyBtn" class="px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-md shrink-0">
             <i class="fa-solid fa-copy"></i>
-            <span id="copyBtnText">Копировать</span>
+            <span id="copyBtnText">Copy</span>
           </button>
         </div>
       </div>
@@ -1347,45 +1344,26 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
             <i class="fa-solid fa-link"></i>
           </div>
           <div>
-            <h2 class="text-sm font-bold text-white">Привязка DiscoPanel API</h2>
-            <p class="text-xs text-slate-400 mt-0.5">Автоматическое обнаружение серверов и загрузка модов</p>
+            <h2 class="text-sm font-bold text-white">DiscoPanel API Integration</h2>
+            <p class="text-xs text-slate-400 mt-0.5">Automatic server discovery and mod synchronization</p>
           </div>
         </div>
 
         <form id="apiConfigForm" onsubmit="saveApiConfig(event)" class="grid grid-cols-1 md:grid-cols-12 gap-3 pt-2">
           <div class="md:col-span-5">
-            <label class="text-[11px] font-semibold text-slate-400 block mb-1">Адрес DiscoPanel</label>
+            <label class="text-[11px] font-semibold text-slate-400 block mb-1">DiscoPanel URL</label>
             <input type="text" id="dpUrlInput" value="${dpUrl}" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3.5 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
           </div>
           <div class="md:col-span-5">
-            <label class="text-[11px] font-semibold text-slate-400 block mb-1">API Токен (с префиксом dp_)</label>
+            <label class="text-[11px] font-semibold text-slate-400 block mb-1">API Token (with dp_ prefix)</label>
             <input type="password" id="dpTokenInput" value="${dpToken}" placeholder="dp_..." class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3.5 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
           </div>
           <div class="md:col-span-2 flex items-end">
             <button type="submit" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 transition-all">
-              Сохранить
+              Save Settings
             </button>
           </div>
         </form>
-      </div>
-
-      <!-- Admin Security Card -->
-      <div class="bg-[#11131a] border border-[#1b1e2a] rounded-2xl p-6">
-        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-lg shrink-0">
-              <i class="fa-solid fa-shield-halved"></i>
-            </div>
-            <div>
-              <h2 class="text-sm font-bold text-white">Безопасность администратора</h2>
-              <p class="text-xs text-slate-400 mt-0.5">Текущий логин: <b class="text-white font-mono">${currentAdminUser}</b></p>
-            </div>
-          </div>
-          <button onclick="openCredentialsModal()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-md">
-            <i class="fa-solid fa-key"></i>
-            <span>Сменить логин и пароль</span>
-          </button>
-        </div>
       </div>
 
     </div>
@@ -1394,28 +1372,28 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
     <div id="section_dashboard" class="hidden p-8 max-w-5xl w-full mx-auto space-y-6">
       <div class="pb-4 border-b border-[#161822]">
         <h1 class="text-xl font-black text-white tracking-tight">Dashboard</h1>
-        <p class="text-xs text-slate-400">Общая статистика и состояние серверов</p>
+        <p class="text-xs text-slate-400">Overview statistics and server status</p>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div class="p-5 rounded-2xl bg-[#11131a] border border-[#1b1e2a]">
-          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Всего серверов</div>
+          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Servers</div>
           <div class="text-3xl font-black text-white font-mono mt-2">${servers.length}</div>
           <div class="text-[11px] text-emerald-400 mt-1 flex items-center gap-1.5">
-            <span class="w-2 h-2 rounded-full bg-emerald-400"></span> ${totalRunning} онлайн
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span> ${totalRunning} online
           </div>
         </div>
 
         <div class="p-5 rounded-2xl bg-[#11131a] border border-[#1b1e2a]">
-          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Игроков онлайн</div>
+          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Online Players</div>
           <div class="text-3xl font-black text-emerald-400 font-mono mt-2">${totalPlayersOnline}</div>
-          <div class="text-[11px] text-slate-400 mt-1">на всех серверах</div>
+          <div class="text-[11px] text-slate-400 mt-1">across all servers</div>
         </div>
 
         <div class="p-5 rounded-2xl bg-[#11131a] border border-[#1b1e2a]">
-          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Моды и паки</div>
+          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Mods & Packs</div>
           <div class="text-3xl font-black text-cyan-400 font-mono mt-2">${totalModsCount}</div>
-          <div class="text-[11px] text-slate-400 mt-1">${totalShadersCount} шейдеров, ${totalPacksCount} ресурспаков</div>
+          <div class="text-[11px] text-slate-400 mt-1">${totalShadersCount} shaders, ${totalPacksCount} resource packs</div>
         </div>
       </div>
     </div>
@@ -1424,75 +1402,26 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
     <div id="section_api" class="hidden p-8 max-w-5xl w-full mx-auto space-y-6">
       <div class="pb-4 border-b border-[#161822]">
         <h1 class="text-xl font-black text-white tracking-tight">API Launcher Endpoints</h1>
-        <p class="text-xs text-slate-400">Документация и доступные эндпоинты для лаунчера</p>
+        <p class="text-xs text-slate-400">Documentation and available endpoints for the launcher</p>
       </div>
 
       <div class="space-y-3">
         <div class="p-4 rounded-xl bg-[#11131a] border border-[#1b1e2a] font-mono text-xs">
           <div class="text-emerald-400 font-bold">GET /api/servers</div>
-          <div class="text-slate-400 mt-1 text-[11px]">Список всех серверов для отображения в лаунчере</div>
+          <div class="text-slate-400 mt-1 text-[11px]">List of all servers displayed in the launcher</div>
         </div>
         <div class="p-4 rounded-xl bg-[#11131a] border border-[#1b1e2a] font-mono text-xs">
           <div class="text-emerald-400 font-bold">GET /api/servers/:id/manifest</div>
-          <div class="text-slate-400 mt-1 text-[11px]">Манифест синхронизации файлов, модов, шейдеров и ресурспаков</div>
+          <div class="text-slate-400 mt-1 text-[11px]">Synchronization manifest for files, mods, shaders, and resource packs</div>
         </div>
         <div class="p-4 rounded-xl bg-[#11131a] border border-[#1b1e2a] font-mono text-xs">
           <div class="text-emerald-400 font-bold">GET /files/:id/*</div>
-          <div class="text-slate-400 mt-1 text-[11px]">Прямая скачка файлов клиентом лаунчера</div>
+          <div class="text-slate-400 mt-1 text-[11px]">Direct file download route for the launcher</div>
         </div>
       </div>
     </div>
 
   </main>
-
-  <!-- ================= MODAL: CHANGE ADMIN CREDENTIALS ================= -->
-  <div id="credentialsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden">
-    <div class="bg-[#11131a] border border-[#222738] rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl space-y-4">
-      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
-        <div class="flex items-center gap-2 text-white font-bold text-sm">
-          <i class="fa-solid fa-shield-halved text-emerald-400"></i>
-          <span>Смена данных администратора</span>
-        </div>
-        <button type="button" onclick="closeCredentialsModal()" class="text-slate-400 hover:text-white text-sm p-1">
-          <i class="fa-solid fa-xmark"></i>
-        </button>
-      </div>
-
-      <form onsubmit="saveCredentials(event)" class="space-y-3.5">
-        <div>
-          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Текущий пароль</label>
-          <input type="password" id="currentPassInput" required placeholder="Введите текущий пароль" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
-        </div>
-
-        <div class="pt-2 border-t border-slate-800/60">
-          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Новый логин</label>
-          <input type="text" id="newUsernameInput" value="${currentAdminUser}" required placeholder="Логин администратора" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none font-mono">
-        </div>
-
-        <div>
-          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Новый пароль</label>
-          <input type="password" id="newPassInput" required placeholder="Минимум 4 символа" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
-        </div>
-
-        <div>
-          <label class="text-[11px] font-semibold text-slate-400 block mb-1">Повторите новый пароль</label>
-          <input type="password" id="confirmPassInput" required placeholder="Повторите пароль" class="w-full bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none">
-        </div>
-
-        <div id="credError" class="hidden p-2.5 rounded-xl bg-red-950/50 border border-red-800/50 text-xs text-red-300"></div>
-        <div id="credSuccess" class="hidden p-2.5 rounded-xl bg-emerald-950/50 border border-emerald-800/50 text-xs text-emerald-300"></div>
-
-        <div class="flex items-center justify-end gap-2.5 pt-2">
-          <button type="button" onclick="closeCredentialsModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 transition-all">
-            Отмена
-          </button>
-          <button type="submit" id="saveCredBtn" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition-all shadow-md">
-            Сохранить
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
 
   <!-- ================= SCRIPTS ================= -->
   <script>
@@ -1600,7 +1529,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         });
         const d = await res.json();
         if (!d.success) {
-          alert('Ошибка переключения мода: ' + (d.error || 'Ошибка'));
+          alert('Failed to toggle mod: ' + (d.error || 'Error'));
         } else {
           const rowTitle = document.getElementById('modTitle_' + serverId + '_' + encodeURIComponent(filename));
           if (rowTitle) {
@@ -1614,7 +1543,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
           }
         }
       } catch (err) {
-        alert('Ошибка сети: ' + err.message);
+        alert('Network error: ' + err.message);
       }
     }
 
@@ -1646,13 +1575,13 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         });
         const d = await res.json();
         if (d.success) {
-          alert('Настройки успешно сохранены!');
+          alert('Settings saved successfully!');
           window.location.reload();
         } else {
-          alert('Ошибка: ' + (d.error || 'Не удалось сохранить'));
+          alert('Error: ' + (d.error || 'Failed to save settings'));
         }
       } catch (err) {
-        alert('Ошибка сети: ' + err.message);
+        alert('Network error: ' + err.message);
       }
     }
 
@@ -1661,13 +1590,13 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         const res = await fetch('/api/admin/sync-api', { method: 'POST' });
         const d = await res.json();
         if (d.success) {
-          alert('Синхронизация с серверами завершена!');
+          alert('Server synchronization completed!');
           window.location.reload();
         } else {
-          alert('Ошибка: ' + (d.error || 'Ошибка синхронизации'));
+          alert('Error: ' + (d.error || 'Sync error'));
         }
       } catch (err) {
-        alert('Ошибка сети: ' + err.message);
+        alert('Network error: ' + err.message);
       }
     }
 
@@ -1676,7 +1605,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       navigator.clipboard.writeText(text).then(() => {
         const btnText = document.getElementById('copyBtnText');
         const origText = btnText.textContent;
-        btnText.textContent = 'Скопировано!';
+        btnText.textContent = 'Copied!';
         setTimeout(() => { btnText.textContent = origText; }, 2000);
       }).catch(() => {
         const dummy = document.createElement('textarea');
@@ -1686,8 +1615,8 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         document.execCommand('copy');
         document.body.removeChild(dummy);
         const btnText = document.getElementById('copyBtnText');
-        btnText.textContent = 'Скопировано!';
-        setTimeout(() => { btnText.textContent = 'Копировать'; }, 2000);
+        btnText.textContent = 'Copied!';
+        setTimeout(() => { btnText.textContent = 'Copy'; }, 2000);
       });
     }
 
@@ -1702,13 +1631,13 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         });
         const d = await res.json();
         if (d.success) {
-          alert('Публичный адрес сохранен!');
+          alert('Public address saved!');
           window.location.reload();
         } else {
-          alert('Ошибка: ' + (d.error || 'Не удалось сохранить'));
+          alert('Error: ' + (d.error || 'Failed to save'));
         }
       } catch (err) {
-        alert('Ошибка: ' + err.message);
+        alert('Error: ' + err.message);
       }
     }
 
@@ -1725,13 +1654,13 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         });
         const d = await res.json();
         if (d.success) {
-          alert('Успешно загружено модов: ' + d.count);
+          alert('Successfully uploaded ' + d.count + ' mod(s)');
           window.location.reload();
         } else {
-          alert('Ошибка загрузки: ' + (d.error || 'Ошибка'));
+          alert('Upload error: ' + (d.error || 'Error'));
         }
       } catch (err) {
-        alert('Ошибка загрузки: ' + err.message);
+        alert('Upload error: ' + err.message);
       }
     }
 
@@ -1748,18 +1677,18 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         });
         const d = await res.json();
         if (d.success) {
-          alert('Успешно загружено шейдеров: ' + d.count);
+          alert('Successfully uploaded ' + d.count + ' shader(s)');
           window.location.reload();
         } else {
-          alert('Ошибка загрузки: ' + (d.error || 'Ошибка'));
+          alert('Upload error: ' + (d.error || 'Error'));
         }
       } catch (err) {
-        alert('Ошибка загрузки: ' + err.message);
+        alert('Upload error: ' + err.message);
       }
     }
 
     async function deleteShader(serverId, filename) {
-      if (!confirm('Удалить шейдер "' + filename + '"?')) return;
+      if (!confirm('Delete shader "' + filename + '"?')) return;
       try {
         const res = await fetch('/api/admin/servers/' + serverId + '/delete-shader', {
           method: 'POST',
@@ -1768,8 +1697,8 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         });
         const d = await res.json();
         if (d.success) { window.location.reload(); }
-        else { alert('Ошибка: ' + (d.error || 'Ошибка')); }
-      } catch (err) { alert('Ошибка: ' + err.message); }
+        else { alert('Error: ' + (d.error || 'Error')); }
+      } catch (err) { alert('Error: ' + err.message); }
     }
 
     async function uploadResourcepacks(serverId, fileList) {
@@ -1785,18 +1714,18 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         });
         const d = await res.json();
         if (d.success) {
-          alert('Успешно загружено ресурспаков: ' + d.count);
+          alert('Successfully uploaded ' + d.count + ' resource pack(s)');
           window.location.reload();
         } else {
-          alert('Ошибка: ' + (d.error || 'Ошибка'));
+          alert('Upload error: ' + (d.error || 'Error'));
         }
       } catch (err) {
-        alert('Ошибка: ' + err.message);
+        alert('Upload error: ' + err.message);
       }
     }
 
     async function deleteResourcepack(serverId, filename) {
-      if (!confirm('Удалить ресурспак "' + filename + '"?')) return;
+      if (!confirm('Delete resource pack "' + filename + '"?')) return;
       try {
         const res = await fetch('/api/admin/servers/' + serverId + '/delete-resourcepack', {
           method: 'POST',
@@ -1805,12 +1734,12 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         });
         const d = await res.json();
         if (d.success) { window.location.reload(); }
-        else { alert('Ошибка: ' + (d.error || 'Ошибка')); }
-      } catch (err) { alert('Ошибка: ' + err.message); }
+        else { alert('Error: ' + (d.error || 'Error')); }
+      } catch (err) { alert('Error: ' + err.message); }
     }
 
     async function deleteMod(serverId, filename) {
-      if (!confirm('Удалить клиентский мод "' + filename + '"?')) return;
+      if (!confirm('Delete client mod "' + filename + '"?')) return;
       try {
         const res = await fetch('/api/admin/servers/' + serverId + '/delete-mod', {
           method: 'POST',
@@ -1819,77 +1748,8 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         });
         const d = await res.json();
         if (d.success) { window.location.reload(); }
-        else { alert('Ошибка: ' + (d.error || 'Ошибка')); }
-      } catch (err) { alert('Ошибка: ' + err.message); }
-    }
-
-    function openCredentialsModal() {
-      document.getElementById('credError').classList.add('hidden');
-      document.getElementById('credSuccess').classList.add('hidden');
-      document.getElementById('currentPassInput').value = '';
-      document.getElementById('newPassInput').value = '';
-      document.getElementById('confirmPassInput').value = '';
-      document.getElementById('credentialsModal').classList.remove('hidden');
-    }
-
-    function closeCredentialsModal() {
-      document.getElementById('credentialsModal').classList.add('hidden');
-    }
-
-    async function saveCredentials(e) {
-      e.preventDefault();
-      const currentPassword = document.getElementById('currentPassInput').value;
-      const newUsername = document.getElementById('newUsernameInput').value.trim();
-      const newPassword = document.getElementById('newPassInput').value;
-      const confirmPassword = document.getElementById('confirmPassInput').value;
-
-      const errBox = document.getElementById('credError');
-      const succBox = document.getElementById('credSuccess');
-      errBox.classList.add('hidden');
-      succBox.classList.add('hidden');
-
-      if (!newUsername) {
-        errBox.textContent = 'Логин не может быть пустым!';
-        errBox.classList.remove('hidden');
-        return;
-      }
-      if (newPassword !== confirmPassword) {
-        errBox.textContent = 'Новые пароли не совпадают!';
-        errBox.classList.remove('hidden');
-        return;
-      }
-      if (newPassword.length < 4) {
-        errBox.textContent = 'Пароль должен быть не менее 4 символов!';
-        errBox.classList.remove('hidden');
-        return;
-      }
-
-      const btn = document.getElementById('saveCredBtn');
-      btn.disabled = true;
-      btn.textContent = 'Сохранение...';
-
-      try {
-        const res = await fetch('/api/admin/change-credentials', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ currentPassword, newUsername, newPassword })
-        });
-        const d = await res.json();
-        if (d.success) {
-          succBox.textContent = 'Данные успешно сохранены! Перезагрузка...';
-          succBox.classList.remove('hidden');
-          setTimeout(() => window.location.reload(), 1200);
-        } else {
-          errBox.textContent = d.error || 'Ошибка сохранения';
-          errBox.classList.remove('hidden');
-        }
-      } catch (err) {
-        errBox.textContent = 'Ошибка сети: ' + err.message;
-        errBox.classList.remove('hidden');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Сохранить';
-      }
+        else { alert('Error: ' + (d.error || 'Error')); }
+      } catch (err) { alert('Error: ' + err.message); }
     }
 
     try {
@@ -1945,7 +1805,7 @@ adminApp.post('/api/admin/servers/:id/toggle-sync', requireAdminAuth, (req, res)
 adminApp.post('/api/admin/servers/:id/toggle-mod', requireAdminAuth, (req, res) => {
   const serverId = req.params.id;
   const { filename, enabled } = req.body;
-  if (!filename) return res.status(400).json({ success: false, error: 'Имя файла не указано' });
+  if (!filename) return res.status(400).json({ success: false, error: 'Filename not specified' });
 
   const safeFilename = path.basename(filename);
   const disabledModsPath = path.join(SERVERS_DIR, serverId, 'disabled_mods.json');
@@ -1970,7 +1830,7 @@ adminApp.post('/api/admin/servers/:id/toggle-mod', requireAdminAuth, (req, res) 
 adminApp.post('/api/admin/servers/:id/upload-mod', requireAdminAuth, modUpload.array('mods', 50), (req, res) => {
   const serverId = req.params.id;
   const files = req.files || [];
-  if (files.length === 0) return res.status(400).json({ success: false, error: 'Файлы не выбраны' });
+  if (files.length === 0) return res.status(400).json({ success: false, error: 'No files selected' });
 
   // Record into client_mods.json
   const clientModsPath = path.join(SERVERS_DIR, serverId, 'client_mods.json');
@@ -1997,7 +1857,7 @@ adminApp.post('/api/admin/servers/:id/upload-mod', requireAdminAuth, modUpload.a
 adminApp.post('/api/admin/servers/:id/delete-mod', requireAdminAuth, (req, res) => {
   const serverId = req.params.id;
   const { filename } = req.body;
-  if (!filename) return res.status(400).json({ success: false, error: 'Имя файла не указано' });
+  if (!filename) return res.status(400).json({ success: false, error: 'Filename not specified' });
 
   const safeFilename = path.basename(filename);
   const targetPath = path.join(SERVERS_DIR, serverId, 'mods', safeFilename);
@@ -2026,7 +1886,7 @@ adminApp.post('/api/admin/servers/:id/delete-mod', requireAdminAuth, (req, res) 
 // Upload shaders (.zip)
 adminApp.post('/api/admin/servers/:id/upload-shader', requireAdminAuth, shaderUpload.array('shaders', 20), (req, res) => {
   const files = req.files || [];
-  if (files.length === 0) return res.status(400).json({ success: false, error: 'Файлы не выбраны' });
+  if (files.length === 0) return res.status(400).json({ success: false, error: 'No files selected' });
   res.json({ success: true, count: files.length, files: files.map(f => f.filename) });
 });
 
@@ -2034,7 +1894,7 @@ adminApp.post('/api/admin/servers/:id/upload-shader', requireAdminAuth, shaderUp
 adminApp.post('/api/admin/servers/:id/delete-shader', requireAdminAuth, (req, res) => {
   const serverId = req.params.id;
   const { filename } = req.body;
-  if (!filename) return res.status(400).json({ success: false, error: 'Имя файла не указано' });
+  if (!filename) return res.status(400).json({ success: false, error: 'Filename not specified' });
 
   const safeFilename = path.basename(filename);
   const targetPath = path.join(SERVERS_DIR, serverId, 'shaderpacks', safeFilename);
@@ -2047,7 +1907,7 @@ adminApp.post('/api/admin/servers/:id/delete-shader', requireAdminAuth, (req, re
 // Upload resourcepacks (.zip)
 adminApp.post('/api/admin/servers/:id/upload-resourcepack', requireAdminAuth, resourcepackUpload.array('resourcepacks', 20), (req, res) => {
   const files = req.files || [];
-  if (files.length === 0) return res.status(400).json({ success: false, error: 'Файлы не выбраны' });
+  if (files.length === 0) return res.status(400).json({ success: false, error: 'No files selected' });
   res.json({ success: true, count: files.length, files: files.map(f => f.filename) });
 });
 
@@ -2055,7 +1915,7 @@ adminApp.post('/api/admin/servers/:id/upload-resourcepack', requireAdminAuth, re
 adminApp.post('/api/admin/servers/:id/delete-resourcepack', requireAdminAuth, (req, res) => {
   const serverId = req.params.id;
   const { filename } = req.body;
-  if (!filename) return res.status(400).json({ success: false, error: 'Имя файла не указано' });
+  if (!filename) return res.status(400).json({ success: false, error: 'Filename not specified' });
 
   const safeFilename = path.basename(filename);
   const targetPath = path.join(SERVERS_DIR, serverId, 'resourcepacks', safeFilename);
