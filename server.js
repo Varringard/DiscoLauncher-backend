@@ -1121,12 +1121,6 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                       <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs"></i>
                       <input type="text" oninput="filterModRows('${s.id}', this.value)" placeholder="Поиск мода..." class="w-full bg-[#12141c] border border-slate-700/80 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-sans">
                     </div>
-
-                    <!-- DiscoPanel Sync Toggle -->
-                    <label class="flex items-center gap-2 cursor-pointer text-xs text-slate-300 font-medium select-none">
-                      <input type="checkbox" ${s.isModsSyncEnabled ? 'checked' : ''} onchange="toggleSync('${s.id}', this.checked)" class="w-4 h-4 accent-indigo-600 rounded">
-                      <span class="hidden md:inline">Синхронизация DiscoPanel</span>
-                    </label>
                   </div>
 
                   <!-- Upload Mod Button -->
