@@ -151,6 +151,38 @@ const modStorage = multer.diskStorage({
 });
 const modUpload = multer({ storage: modStorage, limits: { fileSize: 350 * 1024 * 1024 } });
 
+// Multer for shaderpacks uploads (.zip)
+const shaderStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const srvDir = path.join(SERVERS_DIR, req.params.id, 'shaderpacks');
+    if (!fs.existsSync(srvDir)) fs.mkdirSync(srvDir, { recursive: true });
+    cb(null, srvDir);
+  },
+  filename: (req, file, cb) => {
+    let clean = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    clean = path.basename(clean).replace(/[^a-zA-Z0-9_\-\.\+\(\)\[\] ]/g, '_');
+    if (!clean.endsWith('.zip')) clean += '.zip';
+    cb(null, clean);
+  }
+});
+const shaderUpload = multer({ storage: shaderStorage, limits: { fileSize: 500 * 1024 * 1024 } });
+
+// Multer for resourcepacks uploads (.zip)
+const resourcepackStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const srvDir = path.join(SERVERS_DIR, req.params.id, 'resourcepacks');
+    if (!fs.existsSync(srvDir)) fs.mkdirSync(srvDir, { recursive: true });
+    cb(null, srvDir);
+  },
+  filename: (req, file, cb) => {
+    let clean = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    clean = path.basename(clean).replace(/[^a-zA-Z0-9_\-\.\+\(\)\[\] ]/g, '_');
+    if (!clean.endsWith('.zip')) clean += '.zip';
+    cb(null, clean);
+  }
+});
+const resourcepackUpload = multer({ storage: resourcepackStorage, limits: { fileSize: 500 * 1024 * 1024 } });
+
 // =========================================================================
 // 1. DISCOPANEL API SYNC ENGINE
 // =========================================================================
@@ -483,9 +515,9 @@ launcherApp.get('/api/servers/:id/manifest', (req, res) => {
   const serverId = req.params.id;
   const serverDir = path.join(SERVERS_DIR, serverId);
 
-  if (!fs.existsSync(serverDir)) {
-    fs.mkdirSync(path.join(serverDir, 'mods'), { recursive: true });
-    fs.mkdirSync(path.join(serverDir, 'config'), { recursive: true });
+  for (const sub of ['mods', 'config', 'shaderpacks', 'resourcepacks']) {
+    const p = path.join(serverDir, sub);
+    if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
   }
 
   function scanDir(currentDir, relativePrefix = '') {
@@ -493,6 +525,7 @@ launcherApp.get('/api/servers/:id/manifest', (req, res) => {
     if (!fs.existsSync(currentDir)) return result;
     const entries = fs.readdirSync(currentDir, { withFileTypes: true });
     for (const ent of entries) {
+      if (ent.name.startsWith('.') || ent.name === 'client_mods.json') continue;
       const fullPath = path.join(currentDir, ent.name);
       const relPath = path.posix.join(relativePrefix, ent.name);
       if (ent.isDirectory()) {
@@ -697,6 +730,30 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       s.ip = customHost.trim();
     }
     s.publicHost = customHost || '';
+
+    // Shaders list
+    const shadersDir = path.join(SERVERS_DIR, s.id, 'shaderpacks');
+    if (!fs.existsSync(shadersDir)) fs.mkdirSync(shadersDir, { recursive: true });
+    s.shadersList = fs.readdirSync(shadersDir).filter(f => f.endsWith('.zip')).map(f => {
+      let sizeMb = '0.0';
+      try {
+        const stat = fs.statSync(path.join(shadersDir, f));
+        sizeMb = (stat.size / (1024 * 1024)).toFixed(1);
+      } catch (e) {}
+      return { name: f, sizeMb };
+    });
+
+    // Resource packs list
+    const rpDir = path.join(SERVERS_DIR, s.id, 'resourcepacks');
+    if (!fs.existsSync(rpDir)) fs.mkdirSync(rpDir, { recursive: true });
+    s.resourcepacksList = fs.readdirSync(rpDir).filter(f => f.endsWith('.zip')).map(f => {
+      let sizeMb = '0.0';
+      try {
+        const stat = fs.statSync(path.join(rpDir, f));
+        sizeMb = (stat.size / (1024 * 1024)).toFixed(1);
+      } catch (e) {}
+      return { name: f, sizeMb };
+    });
   });
 
   const html = `<!DOCTYPE html>
@@ -916,6 +973,111 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                 </div>
               `}
             </div>
+
+            <!-- Row: Shaders & Resourcepacks Uploads -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-800/60">
+              <!-- Shaders Upload Area -->
+              <div class="p-4 rounded-2xl bg-amber-950/20 border border-amber-900/40 flex items-center justify-between gap-4">
+                <div>
+                  <div class="flex items-center gap-2 text-amber-300 font-bold text-xs">
+                    <i class="fa-solid fa-sun"></i>
+                    <span>Шейдеры (shaderpacks)</span>
+                  </div>
+                  <p class="text-[11px] text-slate-400 mt-1">
+                    Архивы .zip (Iris / Oculus / OptiFine). Автокачка в shaderpacks/
+                  </p>
+                </div>
+                <div class="shrink-0">
+                  <input type="file" id="shaderFile_${s.id}" multiple accept=".zip" class="hidden" onchange="uploadShaders('${s.id}', this.files)">
+                  <button onclick="document.getElementById('shaderFile_${s.id}').click()" class="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-amber-600/20">
+                    <i class="fa-solid fa-plus"></i> Загрузить .zip
+                  </button>
+                </div>
+              </div>
+
+              <!-- Resourcepacks Upload Area -->
+              <div class="p-4 rounded-2xl bg-emerald-950/20 border border-emerald-900/40 flex items-center justify-between gap-4">
+                <div>
+                  <div class="flex items-center gap-2 text-emerald-300 font-bold text-xs">
+                    <i class="fa-solid fa-palette"></i>
+                    <span>Ресурспаки (resourcepacks)</span>
+                  </div>
+                  <p class="text-[11px] text-slate-400 mt-1">
+                    Архивы .zip текстур и звуков. Автокачка в resourcepacks/
+                  </p>
+                </div>
+                <div class="shrink-0">
+                  <input type="file" id="rpFile_${s.id}" multiple accept=".zip" class="hidden" onchange="uploadResourcepacks('${s.id}', this.files)">
+                  <button onclick="document.getElementById('rpFile_${s.id}').click()" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-emerald-600/20">
+                    <i class="fa-solid fa-plus"></i> Загрузить .zip
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Shaders list -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold text-slate-300">
+                  Установленные шейдеры (${s.shadersList.length})
+                </span>
+                <span class="text-[11px] text-slate-500">
+                  Папка: shaderpacks/ (скачиваются игрокам)
+                </span>
+              </div>
+              ${s.shadersList.length === 0 ? `
+                <div class="p-3 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-center text-xs text-slate-500">
+                  Шейдеры не загружены. Нажмите «Загрузить .zip» выше.
+                </div>
+              ` : `
+                <div class="flex flex-wrap gap-2">
+                  ${s.shadersList.map(sh => `
+                    <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-mono bg-amber-950/40 border border-amber-900/60 text-amber-200">
+                      <i class="fa-solid fa-sun text-amber-400"></i>
+                      <span class="truncate max-w-[260px]">${sh.name}</span>
+                      <span class="text-[9px] px-1.5 py-0.5 rounded font-sans font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        ${sh.sizeMb} MB
+                      </span>
+                      <button onclick="deleteShader('${s.id}', '${sh.name}')" title="Удалить шейдер" class="text-slate-500 hover:text-red-400 transition-colors ml-1 p-0.5">
+                        <i class="fa-solid fa-trash-can text-xs"></i>
+                      </button>
+                    </div>
+                  `).join('')}
+                </div>
+              `}
+            </div>
+
+            <!-- Resourcepacks list -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold text-slate-300">
+                  Установленные ресурспаки (${s.resourcepacksList.length})
+                </span>
+                <span class="text-[11px] text-slate-500">
+                  Папка: resourcepacks/ (скачиваются игрокам)
+                </span>
+              </div>
+              ${s.resourcepacksList.length === 0 ? `
+                <div class="p-3 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-center text-xs text-slate-500">
+                  Ресурспаки не загружены. Нажмите «Загрузить .zip» выше.
+                </div>
+              ` : `
+                <div class="flex flex-wrap gap-2">
+                  ${s.resourcepacksList.map(rp => `
+                    <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-mono bg-emerald-950/40 border border-emerald-900/60 text-emerald-200">
+                      <i class="fa-solid fa-palette text-emerald-400"></i>
+                      <span class="truncate max-w-[260px]">${rp.name}</span>
+                      <span class="text-[9px] px-1.5 py-0.5 rounded font-sans font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        ${rp.sizeMb} MB
+                      </span>
+                      <button onclick="deleteResourcepack('${s.id}', '${rp.name}')" title="Удалить ресурспак" class="text-slate-500 hover:text-red-400 transition-colors ml-1 p-0.5">
+                        <i class="fa-solid fa-trash-can text-xs"></i>
+                      </button>
+                    </div>
+                  `).join('')}
+                </div>
+              `}
+            </div>
           </div>
         `).join('')}
       </div>
@@ -1010,6 +1172,90 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
       }
     }
 
+    async function uploadShaders(serverId, fileList) {
+      if (!fileList || fileList.length === 0) return;
+      const formData = new FormData();
+      for (let i = 0; i < fileList.length; i++) {
+        formData.append('shaders', fileList[i]);
+      }
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/upload-shader', {
+          method: 'POST',
+          body: formData
+        });
+        const d = await res.json();
+        if (d.success) {
+          alert('Успешно загружено шейдеров: ' + d.count);
+          window.location.reload();
+        } else {
+          alert('Ошибка загрузки шейдеров: ' + (d.error || 'Ошибка'));
+        }
+      } catch (err) {
+        alert('Ошибка загрузки шейдеров: ' + err.message);
+      }
+    }
+
+    async function deleteShader(serverId, filename) {
+      if (!confirm('Удалить шейдер "' + filename + '"?')) return;
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/delete-shader', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename })
+        });
+        const d = await res.json();
+        if (d.success) {
+          window.location.reload();
+        } else {
+          alert('Ошибка удаления: ' + (d.error || 'Ошибка'));
+        }
+      } catch (err) {
+        alert('Ошибка удаления: ' + err.message);
+      }
+    }
+
+    async function uploadResourcepacks(serverId, fileList) {
+      if (!fileList || fileList.length === 0) return;
+      const formData = new FormData();
+      for (let i = 0; i < fileList.length; i++) {
+        formData.append('resourcepacks', fileList[i]);
+      }
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/upload-resourcepack', {
+          method: 'POST',
+          body: formData
+        });
+        const d = await res.json();
+        if (d.success) {
+          alert('Успешно загружено ресурспаков: ' + d.count);
+          window.location.reload();
+        } else {
+          alert('Ошибка загрузки ресурспаков: ' + (d.error || 'Ошибка'));
+        }
+      } catch (err) {
+        alert('Ошибка загрузки ресурспаков: ' + err.message);
+      }
+    }
+
+    async function deleteResourcepack(serverId, filename) {
+      if (!confirm('Удалить ресурспак "' + filename + '"?')) return;
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/delete-resourcepack', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename })
+        });
+        const d = await res.json();
+        if (d.success) {
+          window.location.reload();
+        } else {
+          alert('Ошибка удаления: ' + (d.error || 'Ошибка'));
+        }
+      } catch (err) {
+        alert('Ошибка удаления: ' + err.message);
+      }
+    }
+
     async function triggerSyncNow() {
       try {
         const res = await fetch('/api/admin/sync-api', { method: 'POST' });
@@ -1021,6 +1267,10 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
           alert('Ошибка синхронизации: ' + (d.error || 'Ошибка'));
         }
       } catch (err) {
+        alert('Ошибка синхронизации: ' + err.message);
+      }
+    }
+
     function copyLauncherUrl() {
       const text = document.getElementById('launcherApiUrl').textContent.trim();
       navigator.clipboard.writeText(text).then(() => {
@@ -1042,6 +1292,8 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         btnText.textContent = 'Скопировано!';
         setTimeout(() => { btnText.textContent = 'Копировать'; }, 2000);
       });
+    }
+
     async function savePublicHost(serverId) {
       const input = document.getElementById('hostInput_' + serverId);
       const host = input.value.trim();
@@ -1166,6 +1418,48 @@ adminApp.post('/api/admin/servers/:id/delete-mod', requireAdminAuth, (req, res) 
   const count = fs.existsSync(modsDir) ? fs.readdirSync(modsDir).filter(f => f.endsWith('.jar')).length : 0;
   db.prepare('UPDATE servers SET total_mods = ? WHERE id = ?').run(count, serverId);
 
+  res.json({ success: true });
+});
+
+// Upload shaders (.zip)
+adminApp.post('/api/admin/servers/:id/upload-shader', requireAdminAuth, shaderUpload.array('shaders', 20), (req, res) => {
+  const files = req.files || [];
+  if (files.length === 0) return res.status(400).json({ success: false, error: 'Файлы не выбраны' });
+  res.json({ success: true, count: files.length, files: files.map(f => f.filename) });
+});
+
+// Delete shader (.zip)
+adminApp.post('/api/admin/servers/:id/delete-shader', requireAdminAuth, (req, res) => {
+  const serverId = req.params.id;
+  const { filename } = req.body;
+  if (!filename) return res.status(400).json({ success: false, error: 'Имя файла не указано' });
+
+  const safeFilename = path.basename(filename);
+  const targetPath = path.join(SERVERS_DIR, serverId, 'shaderpacks', safeFilename);
+  if (fs.existsSync(targetPath)) {
+    fs.unlinkSync(targetPath);
+  }
+  res.json({ success: true });
+});
+
+// Upload resourcepacks (.zip)
+adminApp.post('/api/admin/servers/:id/upload-resourcepack', requireAdminAuth, resourcepackUpload.array('resourcepacks', 20), (req, res) => {
+  const files = req.files || [];
+  if (files.length === 0) return res.status(400).json({ success: false, error: 'Файлы не выбраны' });
+  res.json({ success: true, count: files.length, files: files.map(f => f.filename) });
+});
+
+// Delete resourcepack (.zip)
+adminApp.post('/api/admin/servers/:id/delete-resourcepack', requireAdminAuth, (req, res) => {
+  const serverId = req.params.id;
+  const { filename } = req.body;
+  if (!filename) return res.status(400).json({ success: false, error: 'Имя файла не указано' });
+
+  const safeFilename = path.basename(filename);
+  const targetPath = path.join(SERVERS_DIR, serverId, 'resourcepacks', safeFilename);
+  if (fs.existsSync(targetPath)) {
+    fs.unlinkSync(targetPath);
+  }
   res.json({ success: true });
 });
 
