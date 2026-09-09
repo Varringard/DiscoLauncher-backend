@@ -993,13 +993,6 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
             <p class="text-xs text-slate-400">Нажмите на сервер для управления модами, шейдерами и настройками</p>
           </div>
         </div>
-
-        <div class="flex items-center gap-2">
-          <button onclick="triggerSyncNow()" class="px-4 py-2 rounded-xl bg-white hover:bg-slate-200 text-black text-xs font-bold flex items-center gap-2 transition-all shadow-md">
-            <i class="fa-solid fa-arrows-rotate text-xs"></i>
-            <span>Синхронизировать</span>
-          </button>
-        </div>
       </div>
 
       <!-- Search & Status Bar -->
