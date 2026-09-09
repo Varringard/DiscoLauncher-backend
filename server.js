@@ -979,7 +979,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         </div>
 
         <div class="flex items-center justify-between px-2 pt-3 text-[10px] text-slate-600 font-mono">
-          <span>v1.2.3</span>
+          <span>v1.2.4</span>
           <span class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Online</span>
         </div>
       </div>
