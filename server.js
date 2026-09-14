@@ -1511,6 +1511,8 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
           <div class="text-slate-400 mt-1 text-[11px]">Direct file download route for the launcher</div>
         </div>
       </div>
+    </div>
+
     <!-- ================= SECTION: FILE MANAGER ================= -->
     <div id="section_files" class="hidden p-8 max-w-6xl w-full mx-auto space-y-6">
       
