@@ -630,15 +630,16 @@ launcherApp.get('/api/auth/verify', authenticatePlayerToken, (req, res) => {
 launcherApp.get('/api/servers', async (req, res) => {
   const servers = db.prepare('SELECT * FROM servers').all();
   const dpUrlSetting = getSetting('discopanel_url', 'http://192.168.10.127:8080');
+  const dpTokenSetting = getSetting('discopanel_token');
   let adminDpHost = '127.0.0.1';
   try { adminDpHost = new URL(dpUrlSetting).hostname; } catch(e) {}
 
   let adminDpMap = new Map();
-  if (dpToken && dpUrl) {
+  if (dpTokenSetting && dpUrlSetting) {
     try {
-      const dpRes = await fetch(`${dpUrl}/discopanel.v1.ServerService/ListServers`, {
+      const dpRes = await fetch(`${dpUrlSetting}/discopanel.v1.ServerService/ListServers`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dpToken}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dpTokenSetting}` },
         body: JSON.stringify({}),
         signal: AbortSignal.timeout(2500)
       });
