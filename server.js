@@ -11,6 +11,8 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const Database = require('better-sqlite3');
 const http = require('http');
+const os = require('os');
+const { execFile } = require('child_process');
 
 // Config & Ports
 const ADMIN_PORT = process.env.ADMIN_PORT || 5000;
@@ -116,7 +118,7 @@ function parseCookies(req) {
 // Admin Auth Middleware
 function requireAdminAuth(req, res, next) {
   const cookies = parseCookies(req);
-  const token = cookies.admin_token || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+  const token = cookies.admin_token || (req.headers.authorization && req.headers.authorization.split(' ')[1]) || req.query.auth_token;
 
   if (!token) {
     if (req.path.startsWith('/api/')) {
@@ -199,6 +201,45 @@ const resourcepackStorage = multer.diskStorage({
   }
 });
 const resourcepackUpload = multer({ storage: resourcepackStorage, limits: { fileSize: 500 * 1024 * 1024 } });
+
+// =========================================================================
+// FILE MANAGER HELPERS & STORAGE
+// =========================================================================
+function resolveSafePath(serverId, subpath = '') {
+  if (!serverId || typeof serverId !== 'string') throw new Error('Invalid server ID');
+  if (serverId.includes('..') || serverId.includes('/') || serverId.includes('\\')) {
+    throw new Error('Invalid server ID');
+  }
+  const serverRoot = path.resolve(SERVERS_DIR, serverId);
+  const normalizedSubpath = path.normalize(subpath || '').replace(/^(\.\.[\/\\])+/, '');
+  const targetPath = path.resolve(serverRoot, normalizedSubpath);
+  if (!targetPath.startsWith(serverRoot)) {
+    throw new Error('Access denied: Path traversal detected');
+  }
+  return { serverRoot, targetPath, normalizedSubpath };
+}
+
+const fmStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    try {
+      const serverId = req.query.serverId || req.body.serverId;
+      const subpath = req.query.subpath || req.body.subpath || '';
+      const { targetPath } = resolveSafePath(serverId, subpath);
+      if (!fs.existsSync(targetPath)) {
+        fs.mkdirSync(targetPath, { recursive: true });
+      }
+      cb(null, targetPath);
+    } catch (err) {
+      cb(err);
+    }
+  },
+  filename: (req, file, cb) => {
+    let clean = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    clean = path.basename(clean).replace(/[\/\\]/g, '_');
+    cb(null, clean);
+  }
+});
+const fmUpload = multer({ storage: fmStorage, limits: { fileSize: 1024 * 1024 * 1024 } });
 
 // =========================================================================
 // 1. DISCOPANEL API SYNC ENGINE
@@ -969,6 +1010,14 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
           <span class="px-2 py-0.5 rounded-md bg-[#1f2438] text-[10px] font-mono text-slate-300 font-bold">${servers.length}</span>
         </button>
 
+        <button onclick="switchNav('files')" id="nav_files" class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-[#12141c] transition-all">
+          <div class="flex items-center gap-3">
+            <i class="fa-solid fa-folder-tree w-4 text-center text-amber-400"></i>
+            <span>Файловый менеджер</span>
+          </div>
+          <span class="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 text-[9px] font-mono font-bold">FS</span>
+        </button>
+
         <button onclick="switchNav('settings')" id="nav_settings" class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-[#12141c] transition-all">
           <div class="flex items-center gap-3">
             <i class="fa-solid fa-gear w-4 text-center text-slate-400"></i>
@@ -1019,7 +1068,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         </div>
 
         <div class="flex items-center justify-between px-2 pt-3 text-[10px] text-slate-600 font-mono">
-          <span>v1.2.4</span>
+          <span>v1.2.5</span>
           <span class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Online</span>
         </div>
       </div>
@@ -1462,6 +1511,141 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
           <div class="text-slate-400 mt-1 text-[11px]">Direct file download route for the launcher</div>
         </div>
       </div>
+    <!-- ================= SECTION: FILE MANAGER ================= -->
+    <div id="section_files" class="hidden p-8 max-w-6xl w-full mx-auto space-y-6">
+      
+      <!-- FM Header -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-[#161822]">
+        <div>
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+              <i class="fa-solid fa-folder-tree"></i>
+            </div>
+            <h1 class="text-xl font-black text-white tracking-tight">Файловый менеджер серверов</h1>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">Просмотр файлов серверов, доступ к архивным сборкам на диске и перенос ресурсов в один клик</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="loadFmDirectory(fmCurrentPath)" class="px-3 py-1.5 rounded-xl bg-[#151824] hover:bg-[#1f2438] border border-[#222738] text-xs font-semibold text-slate-300 transition-all flex items-center gap-2 shadow-sm">
+            <i class="fa-solid fa-rotate text-slate-400"></i>
+            <span>Обновить</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Server Selector & Server Overview Card -->
+      <div class="p-5 rounded-2xl bg-[#11131a] border border-[#1b1e2a] shadow-xl space-y-4">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div class="space-y-1 flex-1">
+            <label class="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+              <i class="fa-solid fa-server text-indigo-400"></i>
+              <span>Выберите сервер для работы с файлами</span>
+            </label>
+            <div class="flex flex-wrap items-center gap-3">
+              <select id="fmServerSelect" onchange="onFmServerChange()" class="bg-[#0b0c11] border border-slate-700/80 rounded-xl px-3 py-2 text-xs font-medium text-slate-200 focus:border-amber-500 focus:outline-none min-w-[280px]">
+                <option value="">Загрузка списка серверов...</option>
+              </select>
+              <div id="fmServerBadge" class="hidden"></div>
+            </div>
+          </div>
+
+          <!-- Server Level Quick Stats & Actions -->
+          <div class="flex flex-wrap items-center gap-2">
+            <div id="fmServerStats" class="flex items-center gap-2 text-xs text-slate-400"></div>
+            <button id="fmMigrateBtn" onclick="openMigrateModal()" class="hidden px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-xs font-bold text-white shadow-lg shadow-amber-900/30 transition-all flex items-center gap-2">
+              <i class="fa-solid fa-bolt"></i>
+              <span>Перенести в активный сервер</span>
+            </button>
+            <button onclick="downloadFmZip('')" class="px-3 py-2 rounded-xl bg-[#1a1d28] hover:bg-[#25293a] border border-[#2a3044] text-xs font-bold text-slate-200 transition-all flex items-center gap-2" title="Скачать всю папку сервера в ZIP">
+              <i class="fa-solid fa-file-zipper text-emerald-400"></i>
+              <span>ZIP сервера</span>
+            </button>
+            <button id="fmDeleteServerBtn" onclick="openDeleteServerModal()" class="hidden px-3 py-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-800/50 text-xs font-bold text-red-300 transition-all flex items-center gap-2" title="Удалить архивный сервер с диска">
+              <i class="fa-solid fa-trash-can"></i>
+              <span>Удалить архив</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Archive Notice Banner -->
+        <div id="fmArchiveBanner" class="hidden p-3.5 rounded-xl bg-gradient-to-r from-amber-950/40 to-orange-950/20 border border-amber-800/40 text-xs text-amber-200/90 flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <i class="fa-solid fa-box-archive text-amber-400 text-lg"></i>
+            <div>
+              <span class="font-bold text-amber-300">Архивный сервер на диске:</span>
+              <span class="text-slate-300 ml-1">Эта сборка сохранена в локальной директории, но отсутствует в DiscoPanel. Вы можете скачивать шейдеры/моды или перенести их в 1 клик.</span>
+            </div>
+          </div>
+          <button onclick="openMigrateModal()" class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shrink-0 transition-all">
+            ⚡ Перенести ресурсы
+          </button>
+        </div>
+      </div>
+
+      <!-- Explorer Controls & Breadcrumbs -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#11131a] border border-[#1b1e2a] px-4 py-3 rounded-2xl">
+        <!-- Breadcrumbs -->
+        <div id="fmBreadcrumbs" class="flex items-center gap-1.5 text-xs text-slate-400 font-mono overflow-x-auto whitespace-nowrap py-1">
+          <button onclick="loadFmDirectory('')" class="hover:text-amber-400 transition-colors flex items-center gap-1">
+            <i class="fa-solid fa-house text-amber-400"></i>
+            <span>root</span>
+          </button>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex flex-wrap items-center gap-2 shrink-0">
+          <div class="relative">
+            <input type="text" id="fmSearchInput" oninput="filterFmItems(this.value)" placeholder="Поиск в папке..." class="bg-[#0b0c11] border border-slate-700/70 rounded-xl px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:border-amber-500 focus:outline-none w-36 sm:w-48 pl-7">
+            <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-2.5 text-[10px] text-slate-500"></i>
+          </div>
+          <button onclick="goFmUp()" id="fmUpBtn" class="px-2.5 py-1.5 rounded-xl bg-[#1a1d28] hover:bg-[#25293a] border border-[#2a3044] text-xs text-slate-300 transition-all" title="Наверх">
+            <i class="fa-solid fa-arrow-up"></i>
+          </button>
+          <button onclick="openCreateFolderModal()" class="px-3 py-1.5 rounded-xl bg-[#1a1d28] hover:bg-[#25293a] border border-[#2a3044] text-xs font-semibold text-slate-200 transition-all flex items-center gap-1.5" title="Создать новую папку">
+            <i class="fa-solid fa-folder-plus text-amber-400"></i>
+            <span class="hidden sm:inline">Новая папка</span>
+          </button>
+          <label class="px-3 py-1.5 rounded-xl bg-emerald-600/90 hover:bg-emerald-500 text-xs font-bold text-white transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-950/40">
+            <i class="fa-solid fa-cloud-arrow-up"></i>
+            <span>Загрузить</span>
+            <input type="file" id="fmFileInput" multiple onchange="onFmFileSelected(event)" class="hidden">
+          </label>
+          <button onclick="downloadFmZip(fmCurrentPath)" class="px-2.5 py-1.5 rounded-xl bg-[#1a1d28] hover:bg-[#25293a] border border-[#2a3044] text-xs text-slate-300 transition-all" title="Скачать текущую папку в ZIP">
+            <i class="fa-solid fa-file-zipper text-emerald-400"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Drag & Drop Zone / File Table Container -->
+      <div id="fmDropZone" ondragover="onFmDragOver(event)" ondragleave="onFmDragLeave(event)" ondrop="onFmDrop(event)" class="rounded-2xl border border-[#1b1e2a] bg-[#11131a] overflow-hidden shadow-xl transition-all relative">
+        <div id="fmDropOverlay" class="hidden absolute inset-0 bg-amber-500/10 backdrop-blur-sm border-2 border-dashed border-amber-500 z-20 flex flex-col items-center justify-center pointer-events-none">
+          <i class="fa-solid fa-cloud-arrow-up text-4xl text-amber-400 mb-2 animate-bounce"></i>
+          <span class="text-sm font-bold text-white">Перетащите файлы сюда для загрузки</span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-[#0c0d12] border-b border-[#1b1e2a] text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+              <tr>
+                <th class="py-3 px-4">Имя файла / папки</th>
+                <th class="py-3 px-4 w-32">Тип</th>
+                <th class="py-3 px-4 w-28 text-right">Размер</th>
+                <th class="py-3 px-4 w-44">Изменено</th>
+                <th class="py-3 px-4 w-36 text-right">Действия</th>
+              </tr>
+            </thead>
+            <tbody id="fmTableBody" class="divide-y divide-[#161822]">
+              <tr>
+                <td colspan="5" class="py-8 text-center text-slate-500">
+                  <i class="fa-solid fa-circle-notch fa-spin text-lg mb-2"></i>
+                  <div>Загрузка содержимого...</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
     </div>
 
   </main>
@@ -1515,6 +1699,109 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
     </div>
   </div>
 
+  <!-- ================= MODAL: MIGRATE RESOURCES FROM ARCHIVE ================= -->
+  <div id="fmMigrateModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden">
+    <div class="bg-[#11131a] border border-[#222738] rounded-2xl p-6 max-w-lg w-full mx-4 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-2 text-white font-bold text-sm">
+          <i class="fa-solid fa-bolt text-amber-400"></i>
+          <span>Перенос ресурсов в активный сервер</span>
+        </div>
+        <button type="button" onclick="closeMigrateModal()" class="text-slate-400 hover:text-white text-sm p-1">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <div>
+          <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Источник (Архивный сервер)</div>
+          <div id="fmMigrateSourceName" class="font-mono text-amber-400 bg-[#0b0c11] border border-slate-800 rounded-xl px-3 py-2"></div>
+        </div>
+
+        <div>
+          <label class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">Куда перенести (Целевой активный сервер)</label>
+          <select id="fmMigrateTargetSelect" class="w-full bg-[#0b0c11] border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"></select>
+        </div>
+
+        <div class="space-y-2 pt-2 border-t border-slate-800/80">
+          <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Что скопировать:</div>
+          <label class="flex items-center gap-2.5 p-2 rounded-xl bg-[#0b0c11] border border-slate-800/60 cursor-pointer hover:border-slate-700">
+            <input type="checkbox" id="fmMigrateShaders" checked class="w-4 h-4 rounded text-amber-500 bg-slate-900 border-slate-700">
+            <div>
+              <div class="font-bold text-slate-200">Шейдерпаки (shaderpacks/)</div>
+              <div class="text-[10px] text-slate-500">Все шейдеры из архивного сервера</div>
+            </div>
+          </label>
+          <label class="flex items-center gap-2.5 p-2 rounded-xl bg-[#0b0c11] border border-slate-800/60 cursor-pointer hover:border-slate-700">
+            <input type="checkbox" id="fmMigrateRp" checked class="w-4 h-4 rounded text-amber-500 bg-slate-900 border-slate-700">
+            <div>
+              <div class="font-bold text-slate-200">Ресурспаки (resourcepacks/)</div>
+              <div class="text-[10px] text-slate-500">Все текстуры и ресурспаки</div>
+            </div>
+          </label>
+          <label class="flex items-center gap-2.5 p-2 rounded-xl bg-[#0b0c11] border border-slate-800/60 cursor-pointer hover:border-slate-700">
+            <input type="checkbox" id="fmMigrateClientMods" checked class="w-4 h-4 rounded text-amber-500 bg-slate-900 border-slate-700">
+            <div>
+              <div class="font-bold text-slate-200">Клиентские моды (client_mods.json)</div>
+              <div class="text-[10px] text-slate-500">Моды для оптимизации/интерфейса (Iris, Sodium, ModMenu и т.д.)</div>
+            </div>
+          </label>
+          <label class="flex items-center gap-2.5 p-2 rounded-xl bg-[#0b0c11] border border-slate-800/60 cursor-pointer hover:border-slate-700">
+            <input type="checkbox" id="fmMigrateAllMods" class="w-4 h-4 rounded text-amber-500 bg-slate-900 border-slate-700">
+            <div>
+              <div class="font-bold text-slate-200">Все моды сервера (mods/)</div>
+              <div class="text-[10px] text-slate-500">Скопировать абсолютно все .jar файлы из папки mods</div>
+            </div>
+          </label>
+        </div>
+
+        <div class="flex items-center justify-end gap-2.5 pt-3">
+          <button type="button" onclick="closeMigrateModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 transition-all">
+            Отмена
+          </button>
+          <button type="button" id="fmMigrateConfirmBtn" onclick="executeMigrateSubmit()" class="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-xs font-bold text-white transition-all shadow-md">
+            Начать перенос
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: DELETE ARCHIVE SERVER ================= -->
+  <div id="fmDeleteServerModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden">
+    <div class="bg-[#11131a] border border-red-900/40 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-2 text-red-400 font-bold text-sm">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>Удаление архивного сервера</span>
+        </div>
+        <button type="button" onclick="closeDeleteServerModal()" class="text-slate-400 hover:text-white text-sm p-1">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <p class="text-slate-300">
+          Вы собираетесь безвозвратно удалить папку архивного сервера с диска:
+        </p>
+        <div id="fmDeleteServerConfirmId" class="p-2 rounded-lg bg-red-950/40 border border-red-800/40 font-mono text-red-300 select-all font-bold"></div>
+        <p class="text-slate-400 text-[11px]">
+          Для подтверждения введите точный идентификатор сервера ниже:
+        </p>
+        <input type="text" id="fmDeleteServerInput" placeholder="Введите ID сервера" class="w-full bg-[#0b0c11] border border-red-800/50 rounded-xl px-3 py-2 text-xs text-slate-200 font-mono focus:border-red-500 focus:outline-none">
+
+        <div class="flex items-center justify-end gap-2.5 pt-2">
+          <button type="button" onclick="closeDeleteServerModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 transition-all">
+            Отмена
+          </button>
+          <button type="button" onclick="executeDeleteServerSubmit()" class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-bold text-white transition-all shadow-md">
+            Удалить навсегда
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ================= SCRIPTS ================= -->
   <script>
     (function() {
@@ -1535,7 +1822,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
     })();
 
     function switchNav(nav) {
-      const sections = ['servers', 'settings', 'dashboard', 'api'];
+      const sections = ['servers', 'settings', 'dashboard', 'api', 'files'];
       sections.forEach(s => {
         const el = document.getElementById('section_' + s);
         const navEl = document.getElementById('nav_' + s);
@@ -1549,6 +1836,536 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         }
       });
       try { localStorage.setItem('discopanel_active_nav', nav); } catch(e) {}
+      if (nav === 'files') {
+        initFileManager();
+      }
+    }
+
+    // =========================================================================
+    // FILE MANAGER FRONTEND CLIENT
+    // =========================================================================
+    let fmServers = [];
+    let fmCurrentServerId = '';
+    let fmCurrentPath = '';
+    let fmCurrentItems = [];
+
+    async function initFileManager() {
+      if (fmServers.length === 0) {
+        await loadFmServers();
+      } else if (!fmCurrentServerId && fmServers.length > 0) {
+        fmCurrentServerId = fmServers[0].id;
+        await loadFmDirectory('');
+      }
+    }
+
+    async function loadFmServers() {
+      try {
+        const res = await fetch('/api/admin/fs/servers');
+        const data = await res.json();
+        if (!data.success) {
+          console.error('Failed to load servers:', data.error);
+          return;
+        }
+        fmServers = data.servers || [];
+        renderFmServerSelect();
+        if (fmServers.length > 0) {
+          if (!fmCurrentServerId || !fmServers.some(function(s) { return s.id === fmCurrentServerId; })) {
+            fmCurrentServerId = fmServers[0].id;
+          }
+          const sel = document.getElementById('fmServerSelect');
+          if (sel) sel.value = fmCurrentServerId;
+          updateFmServerHeader();
+          await loadFmDirectory('');
+        }
+      } catch (err) {
+        console.error('Error loading servers for FM:', err);
+      }
+    }
+
+    function renderFmServerSelect() {
+      const sel = document.getElementById('fmServerSelect');
+      if (!sel) return;
+      sel.innerHTML = '';
+
+      const activeList = fmServers.filter(function(s) { return s.isActive; });
+      const archiveList = fmServers.filter(function(s) { return !s.isActive; });
+
+      if (activeList.length > 0) {
+        const grp = document.createElement('optgroup');
+        grp.label = '🟢 Активные серверы (В лаунчере)';
+        activeList.forEach(function(s) {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = s.name + ' (' + s.id.substring(0, 8) + '...)';
+          grp.appendChild(opt);
+        });
+        sel.appendChild(grp);
+      }
+
+      if (archiveList.length > 0) {
+        const grp = document.createElement('optgroup');
+        grp.label = '📦 Архивные серверы на диске';
+        archiveList.forEach(function(s) {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = '[Архив] ' + s.name + ' (' + s.modsCount + ' модов, ' + s.shadersCount + ' шейдеров)';
+          grp.appendChild(opt);
+        });
+        sel.appendChild(grp);
+      }
+    }
+
+    function onFmServerChange() {
+      const sel = document.getElementById('fmServerSelect');
+      fmCurrentServerId = sel.value;
+      updateFmServerHeader();
+      loadFmDirectory('');
+    }
+
+    function updateFmServerHeader() {
+      const srv = fmServers.find(function(s) { return s.id === fmCurrentServerId; });
+      const badge = document.getElementById('fmServerBadge');
+      const stats = document.getElementById('fmServerStats');
+      const banner = document.getElementById('fmArchiveBanner');
+      const migrateBtn = document.getElementById('fmMigrateBtn');
+      const deleteServerBtn = document.getElementById('fmDeleteServerBtn');
+
+      if (!srv) return;
+
+      if (srv.isActive) {
+        badge.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold text-xs';
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span>Активен в панели</span>';
+        badge.classList.remove('hidden');
+        banner.classList.add('hidden');
+        migrateBtn.classList.add('hidden');
+        deleteServerBtn.classList.add('hidden');
+      } else {
+        badge.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold text-xs';
+        badge.innerHTML = '<i class="fa-solid fa-box-archive"></i><span>Архив на диске</span>';
+        badge.classList.remove('hidden');
+        banner.classList.remove('hidden');
+        migrateBtn.classList.remove('hidden');
+        deleteServerBtn.classList.remove('hidden');
+      }
+
+      stats.innerHTML = '<span class="px-2 py-0.5 rounded bg-[#161925] border border-[#23283c] font-mono text-[11px] text-slate-300"><b>' + srv.modsCount + '</b> модов</span>' +
+        '<span class="px-2 py-0.5 rounded bg-[#161925] border border-[#23283c] font-mono text-[11px] text-slate-300"><b>' + srv.shadersCount + '</b> шейдеров</span>' +
+        '<span class="px-2 py-0.5 rounded bg-[#161925] border border-[#23283c] font-mono text-[11px] text-slate-300"><b>' + srv.rpCount + '</b> паков</span>';
+    }
+
+    async function loadFmDirectory(subpath) {
+      if (!fmCurrentServerId) return;
+      fmCurrentPath = subpath || '';
+      renderFmBreadcrumbs();
+
+      const tbody = document.getElementById('fmTableBody');
+      tbody.innerHTML = '<tr><td colspan="5" class="py-10 text-center text-slate-500">' +
+        '<i class="fa-solid fa-circle-notch fa-spin text-xl text-amber-400 mb-2"></i>' +
+        '<div>Загрузка содержимого папки...</div>' +
+        '</td></tr>';
+
+      try {
+        const res = await fetch('/api/admin/fs/list?serverId=' + encodeURIComponent(fmCurrentServerId) + '&subpath=' + encodeURIComponent(fmCurrentPath));
+        const data = await res.json();
+        if (!data.success) {
+          tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-red-400">' +
+            '<i class="fa-solid fa-triangle-exclamation text-xl mb-1"></i>' +
+            '<div>Ошибка: ' + escapeHtml(data.error || 'Не удалось прочитать папку') + '</div>' +
+            '</td></tr>';
+          return;
+        }
+
+        fmCurrentItems = data.items || [];
+        renderFmTable(fmCurrentItems);
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-red-400">' +
+          '<i class="fa-solid fa-triangle-exclamation text-xl mb-1"></i>' +
+          '<div>Сетевая ошибка: ' + escapeHtml(err.message) + '</div>' +
+          '</td></tr>';
+      }
+    }
+
+    function renderFmBreadcrumbs() {
+      const container = document.getElementById('fmBreadcrumbs');
+      if (!container) return;
+
+      const srv = fmServers.find(function(s) { return s.id === fmCurrentServerId; });
+      const serverTitle = srv ? srv.name : fmCurrentServerId;
+
+      let html = '<button onclick="loadFmDirectory()" class="hover:text-amber-400 transition-colors flex items-center gap-1.5 font-bold text-slate-200">' +
+        '<i class="fa-solid fa-server text-indigo-400"></i>' +
+        '<span>' + escapeHtml(serverTitle) + '</span>' +
+        '</button>';
+
+      if (fmCurrentPath) {
+        const parts = fmCurrentPath.split('/').filter(Boolean);
+        let accumulated = '';
+        for (let i = 0; i < parts.length; i++) {
+          accumulated += (accumulated ? '/' : '') + parts[i];
+          const isLast = (i === parts.length - 1);
+          const currentAccum = accumulated;
+          html += '<span class="text-slate-600">/</span>' +
+            '<button onclick="loadFmDirectory(this.dataset.path)" data-path="' + escapeHtml(currentAccum) + '" class="' + (isLast ? 'text-amber-400 font-bold' : 'text-slate-400 hover:text-white') + ' transition-colors">' +
+            escapeHtml(parts[i]) +
+            '</button>';
+        }
+      }
+      container.innerHTML = html;
+
+      const upBtn = document.getElementById('fmUpBtn');
+      if (upBtn) {
+        upBtn.disabled = !fmCurrentPath;
+        upBtn.className = !fmCurrentPath ? 'px-2.5 py-1.5 rounded-xl bg-[#141620] border border-[#1d2130] text-xs text-slate-600 cursor-not-allowed' : 'px-2.5 py-1.5 rounded-xl bg-[#1a1d28] hover:bg-[#25293a] border border-[#2a3044] text-xs text-slate-300 transition-all';
+      }
+    }
+
+    function goFmUp() {
+      if (!fmCurrentPath) return;
+      const parts = fmCurrentPath.split('/').filter(Boolean);
+      parts.pop();
+      loadFmDirectory(parts.join('/'));
+    }
+
+    function filterFmItems(q) {
+      const query = (q || '').toLowerCase().trim();
+      if (!query) {
+        renderFmTable(fmCurrentItems);
+        return;
+      }
+      const filtered = fmCurrentItems.filter(function(item) { return item.name.toLowerCase().includes(query); });
+      renderFmTable(filtered);
+    }
+
+    function renderFmTable(items) {
+      const tbody = document.getElementById('fmTableBody');
+      if (!tbody) return;
+
+      if (!items || items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="py-10 text-center text-slate-500">' +
+          '<i class="fa-regular fa-folder-open text-3xl mb-2 text-slate-600"></i>' +
+          '<div>В этой папке пусто</div>' +
+          '</td></tr>';
+        return;
+      }
+
+      let html = '';
+      items.forEach(function(item) {
+        const itemPath = fmCurrentPath ? (fmCurrentPath + '/' + item.name) : item.name;
+
+        let icon = 'fa-file text-slate-400';
+        let typeBadge = item.ext || 'файл';
+
+        if (item.isDir) {
+          icon = 'fa-folder text-amber-400';
+          typeBadge = 'папка';
+        } else if (item.ext === '.jar') {
+          icon = 'fa-cube text-indigo-400';
+          typeBadge = 'мод (.jar)';
+        } else if (item.ext === '.zip') {
+          icon = 'fa-file-zipper text-emerald-400';
+          typeBadge = 'архив (.zip)';
+        } else if (['.json', '.toml', '.yml', '.yaml', '.properties', '.cfg', '.txt', '.log'].includes(item.ext)) {
+          icon = 'fa-file-code text-cyan-400';
+        } else if (['.png', '.jpg', '.jpeg', '.webp'].includes(item.ext)) {
+          icon = 'fa-file-image text-pink-400';
+        }
+
+        const sizeStr = item.isDir ? '-' : formatBytes(item.size);
+        const dateStr = item.mtime ? new Date(item.mtime).toLocaleString('ru-RU') : '-';
+
+        html += '<tr class="hover:bg-[#141722] transition-colors group">' +
+          '<td class="py-2.5 px-4 font-medium">' +
+          '<div class="flex items-center gap-2.5">' +
+          '<i class="fa-solid ' + icon + ' text-sm w-4 text-center shrink-0"></i>';
+
+        if (item.isDir) {
+          html += '<button onclick="loadFmDirectory(this.dataset.path)" data-path="' + escapeHtml(itemPath) + '" class="text-slate-200 hover:text-amber-400 font-semibold transition-colors truncate text-left">' +
+            escapeHtml(item.name) +
+            '</button>';
+        } else {
+          html += '<span class="text-slate-300 truncate">' + escapeHtml(item.name) + '</span>';
+        }
+
+        html += '</div></td>' +
+          '<td class="py-2.5 px-4 text-slate-500 font-mono text-[11px]">' + typeBadge + '</td>' +
+          '<td class="py-2.5 px-4 text-right text-slate-400 font-mono text-[11px]">' + sizeStr + '</td>' +
+          '<td class="py-2.5 px-4 text-slate-500 font-mono text-[11px]">' + dateStr + '</td>' +
+          '<td class="py-2.5 px-4 text-right">' +
+          '<div class="flex items-center justify-end gap-1.5 opacity-80 group-hover:opacity-100 transition-opacity">';
+
+        if (item.isDir) {
+          html += '<button onclick="loadFmDirectory(this.dataset.path)" data-path="' + escapeHtml(itemPath) + '" class="p-1.5 rounded-lg bg-[#1a1d28] hover:bg-[#25293a] text-slate-300 hover:text-white transition-all" title="Открыть папку">' +
+            '<i class="fa-solid fa-arrow-right-to-bracket text-xs"></i>' +
+            '</button>' +
+            '<button onclick="downloadFmZip(this.dataset.path)" data-path="' + escapeHtml(itemPath) + '" class="p-1.5 rounded-lg bg-[#1a1d28] hover:bg-[#25293a] text-emerald-400 hover:text-emerald-300 transition-all" title="Скачать папку как ZIP">' +
+            '<i class="fa-solid fa-file-zipper text-xs"></i>' +
+            '</button>' +
+            '<button onclick="deleteFmItem(this.dataset.path, true)" data-path="' + escapeHtml(itemPath) + '" class="p-1.5 rounded-lg bg-red-950/30 hover:bg-red-900/50 text-red-400 transition-all" title="Удалить папку">' +
+            '<i class="fa-solid fa-trash-can text-xs"></i>' +
+            '</button>';
+        } else {
+          html += '<button onclick="downloadFmFile(this.dataset.path)" data-path="' + escapeHtml(itemPath) + '" class="p-1.5 rounded-lg bg-[#1a1d28] hover:bg-[#25293a] text-emerald-400 hover:text-emerald-300 transition-all" title="Скачать файл">' +
+            '<i class="fa-solid fa-download text-xs"></i>' +
+            '</button>' +
+            '<button onclick="deleteFmItem(this.dataset.path, false)" data-path="' + escapeHtml(itemPath) + '" class="p-1.5 rounded-lg bg-red-950/30 hover:bg-red-900/50 text-red-400 transition-all" title="Удалить файл">' +
+            '<i class="fa-solid fa-trash-can text-xs"></i>' +
+            '</button>';
+        }
+
+        html += '</div></td></tr>';
+      });
+
+      tbody.innerHTML = html;
+    }
+
+    function downloadFmFile(filepath) {
+      const token = localStorage.getItem('admin_token') || '';
+      window.location.href = '/api/admin/fs/download?serverId=' + encodeURIComponent(fmCurrentServerId) + '&filepath=' + encodeURIComponent(filepath) + '&auth_token=' + encodeURIComponent(token);
+    }
+
+    function downloadFmZip(subpath) {
+      const token = localStorage.getItem('admin_token') || '';
+      window.location.href = '/api/admin/fs/download-zip?serverId=' + encodeURIComponent(fmCurrentServerId) + '&subpath=' + encodeURIComponent(subpath || '') + '&auth_token=' + encodeURIComponent(token);
+    }
+
+    async function deleteFmItem(filepath, isDir) {
+      const itemType = isDir ? 'папку со всем содержимым' : 'файл';
+      if (!confirm('Вы уверены, что хотите удалить ' + itemType + ' "' + filepath + '"?')) return;
+
+      try {
+        const res = await fetch('/api/admin/fs/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serverId: fmCurrentServerId, filepath: filepath })
+        });
+        const data = await res.json();
+        if (data.success) {
+          loadFmDirectory(fmCurrentPath);
+        } else {
+          alert('Ошибка удаления: ' + (data.error || 'Неизвестная ошибка'));
+        }
+      } catch (err) {
+        alert('Сетевая ошибка: ' + err.message);
+      }
+    }
+
+    async function onFmFileSelected(e) {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+      await uploadFmFiles(files);
+      e.target.value = '';
+    }
+
+    async function uploadFmFiles(fileList) {
+      const token = localStorage.getItem('admin_token') || '';
+      const formData = new FormData();
+      for (let i = 0; i < fileList.length; i++) {
+        formData.append('files', fileList[i]);
+      }
+
+      const tbody = document.getElementById('fmTableBody');
+      tbody.innerHTML = '<tr><td colspan="5" class="py-10 text-center text-amber-400">' +
+        '<i class="fa-solid fa-cloud-arrow-up fa-bounce text-2xl mb-2"></i>' +
+        '<div>Загрузка ' + fileList.length + ' файла(ов)... Пожалуйста, подождите</div>' +
+        '</td></tr>';
+
+      try {
+        const res = await fetch('/api/admin/fs/upload?serverId=' + encodeURIComponent(fmCurrentServerId) + '&subpath=' + encodeURIComponent(fmCurrentPath) + '&auth_token=' + encodeURIComponent(token), {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.success) {
+          await loadFmDirectory(fmCurrentPath);
+        } else {
+          alert('Ошибка загрузки: ' + (data.error || 'Сбой'));
+          await loadFmDirectory(fmCurrentPath);
+        }
+      } catch (err) {
+        alert('Сетевая ошибка при загрузке: ' + err.message);
+        await loadFmDirectory(fmCurrentPath);
+      }
+    }
+
+    function onFmDragOver(e) {
+      e.preventDefault();
+      document.getElementById('fmDropOverlay').classList.remove('hidden');
+    }
+
+    function onFmDragLeave(e) {
+      e.preventDefault();
+      document.getElementById('fmDropOverlay').classList.add('hidden');
+    }
+
+    async function onFmDrop(e) {
+      e.preventDefault();
+      document.getElementById('fmDropOverlay').classList.add('hidden');
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        await uploadFmFiles(e.dataTransfer.files);
+      }
+    }
+
+    function openCreateFolderModal() {
+      const name = prompt('Введите имя новой папки:');
+      if (!name || !name.trim()) return;
+      createFolderSubmit(name.trim());
+    }
+
+    async function createFolderSubmit(dirName) {
+      try {
+        const res = await fetch('/api/admin/fs/mkdir', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            serverId: fmCurrentServerId,
+            subpath: fmCurrentPath,
+            dirName: dirName
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          loadFmDirectory(fmCurrentPath);
+        } else {
+          alert('Ошибка создания папки: ' + (data.error || 'Ошибка'));
+        }
+      } catch (err) {
+        alert('Сетевая ошибка: ' + err.message);
+      }
+    }
+
+    function openMigrateModal() {
+      const modal = document.getElementById('fmMigrateModal');
+      const srcNameEl = document.getElementById('fmMigrateSourceName');
+      const targetSel = document.getElementById('fmMigrateTargetSelect');
+
+      const srv = fmServers.find(function(s) { return s.id === fmCurrentServerId; });
+      srcNameEl.textContent = srv ? (srv.name + ' (' + srv.id + ')') : fmCurrentServerId;
+
+      targetSel.innerHTML = '';
+      const activeServers = fmServers.filter(function(s) { return s.isActive && s.id !== fmCurrentServerId; });
+      if (activeServers.length === 0) {
+        targetSel.innerHTML = '<option value="">Нет других активных серверов</option>';
+      } else {
+        activeServers.forEach(function(s) {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = s.name + ' (' + s.id + ')';
+          targetSel.appendChild(opt);
+        });
+      }
+
+      modal.classList.remove('hidden');
+    }
+
+    function closeMigrateModal() {
+      document.getElementById('fmMigrateModal').classList.add('hidden');
+    }
+
+    async function executeMigrateSubmit() {
+      const targetServerId = document.getElementById('fmMigrateTargetSelect').value;
+      if (!targetServerId) {
+        alert('Выберите целевой сервер');
+        return;
+      }
+
+      const copyShaders = document.getElementById('fmMigrateShaders').checked;
+      const copyResourcepacks = document.getElementById('fmMigrateRp').checked;
+      const copyClientMods = document.getElementById('fmMigrateClientMods').checked;
+      const copyAllMods = document.getElementById('fmMigrateAllMods').checked;
+
+      if (!copyShaders && !copyResourcepacks && !copyClientMods && !copyAllMods) {
+        alert('Выберите хотя бы один пункт для переноса');
+        return;
+      }
+
+      const btn = document.getElementById('fmMigrateConfirmBtn');
+      const origText = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Копирование...';
+
+      try {
+        const res = await fetch('/api/admin/fs/migrate-archive', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourceServerId: fmCurrentServerId,
+            targetServerId: targetServerId,
+            options: { copyShaders: copyShaders, copyResourcepacks: copyResourcepacks, copyClientMods: copyClientMods, copyAllMods: copyAllMods }
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Перенос успешно выполнен! ' + data.message);
+          closeMigrateModal();
+          await loadFmServers();
+        } else {
+          alert('Ошибка переноса: ' + (data.error || 'Сбой'));
+        }
+      } catch (err) {
+        alert('Сетевая ошибка: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+      }
+    }
+
+    function openDeleteServerModal() {
+      const modal = document.getElementById('fmDeleteServerModal');
+      document.getElementById('fmDeleteServerConfirmId').textContent = fmCurrentServerId;
+      document.getElementById('fmDeleteServerInput').value = '';
+      modal.classList.remove('hidden');
+    }
+
+    function closeDeleteServerModal() {
+      document.getElementById('fmDeleteServerModal').classList.add('hidden');
+    }
+
+    async function executeDeleteServerSubmit() {
+      const input = document.getElementById('fmDeleteServerInput').value.trim();
+      if (input !== fmCurrentServerId) {
+        alert('Введенное значение не совпадает с идентификатором сервера!');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/admin/fs/delete-server', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            serverId: fmCurrentServerId,
+            confirmText: input
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Архивный сервер успешно удален с диска');
+          closeDeleteServerModal();
+          fmCurrentServerId = '';
+          await loadFmServers();
+        } else {
+          alert('Ошибка при удалении: ' + (data.error || 'Сбой'));
+        }
+      } catch (err) {
+        alert('Сетевая ошибка: ' + err.message);
+      }
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
     }
 
     try {
@@ -2090,6 +2907,384 @@ adminApp.post('/api/admin/sync-api', requireAdminAuth, async (req, res) => {
   try {
     const result = await syncWithDiscoPanelAPI();
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// =========================================================================
+// FILE MANAGER API ENDPOINTS
+// =========================================================================
+
+adminApp.get('/api/admin/fs/servers', requireAdminAuth, (req, res) => {
+  try {
+    const dbServers = db.prepare('SELECT id, name, version, ip, port FROM servers').all();
+    const dbMap = new Map(dbServers.map(s => [s.id, s]));
+
+    if (!fs.existsSync(SERVERS_DIR)) {
+      return res.json({ success: true, servers: [] });
+    }
+
+    const dirEntries = fs.readdirSync(SERVERS_DIR, { withFileTypes: true });
+    const result = [];
+
+    for (const ent of dirEntries) {
+      if (!ent.isDirectory() || ent.name.startsWith('.')) continue;
+      const srvId = ent.name;
+      const srvDir = path.join(SERVERS_DIR, srvId);
+      const isDb = dbMap.has(srvId);
+      const dbInfo = dbMap.get(srvId);
+
+      const modsDir = path.join(srvDir, 'mods');
+      const shadersDir = path.join(srvDir, 'shaderpacks');
+      const rpDir = path.join(srvDir, 'resourcepacks');
+      const clientModsFile = path.join(srvDir, 'client_mods.json');
+
+      let modsCount = 0;
+      let shadersCount = 0;
+      let rpCount = 0;
+      let hasClientMods = false;
+
+      try {
+        if (fs.existsSync(modsDir)) {
+          modsCount = fs.readdirSync(modsDir).filter(f => f.endsWith('.jar')).length;
+        }
+      } catch (e) {}
+
+      try {
+        if (fs.existsSync(shadersDir)) {
+          shadersCount = fs.readdirSync(shadersDir).filter(f => !f.startsWith('.')).length;
+        }
+      } catch (e) {}
+
+      try {
+        if (fs.existsSync(rpDir)) {
+          rpCount = fs.readdirSync(rpDir).filter(f => !f.startsWith('.')).length;
+        }
+      } catch (e) {}
+
+      try {
+        if (fs.existsSync(clientModsFile)) {
+          hasClientMods = true;
+        }
+      } catch (e) {}
+
+      result.push({
+        id: srvId,
+        name: dbInfo ? dbInfo.name : srvId,
+        isActive: isDb,
+        gameVersion: dbInfo ? dbInfo.version : 'Локальный',
+        modsCount,
+        shadersCount,
+        rpCount,
+        hasClientMods
+      });
+    }
+
+    result.sort((a, b) => {
+      if (a.isActive && !b.isActive) return -1;
+      if (!a.isActive && b.isActive) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    res.json({ success: true, servers: result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+adminApp.get('/api/admin/fs/list', requireAdminAuth, (req, res) => {
+  try {
+    const { serverId, subpath = '' } = req.query;
+    const { targetPath, normalizedSubpath } = resolveSafePath(serverId, subpath);
+
+    if (!fs.existsSync(targetPath)) {
+      return res.status(404).json({ success: false, error: 'Папка не найдена' });
+    }
+    const stat = fs.statSync(targetPath);
+    if (!stat.isDirectory()) {
+      return res.status(400).json({ success: false, error: 'Указанный путь не является папкой' });
+    }
+
+    const dirents = fs.readdirSync(targetPath, { withFileTypes: true });
+    const items = [];
+
+    for (const d of dirents) {
+      if (d.name.startsWith('.') && d.name !== '.env') continue;
+      const full = path.join(targetPath, d.name);
+      try {
+        const s = fs.statSync(full);
+        items.push({
+          name: d.name,
+          isDir: d.isDirectory(),
+          size: d.isDirectory() ? 0 : s.size,
+          mtime: s.mtimeMs,
+          ext: d.isDirectory() ? '' : path.extname(d.name).toLowerCase()
+        });
+      } catch (e) {}
+    }
+
+    items.sort((a, b) => {
+      if (a.isDir && !b.isDir) return -1;
+      if (!a.isDir && b.isDir) return 1;
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
+    res.json({
+      success: true,
+      serverId,
+      currentPath: normalizedSubpath.replace(/\\/g, '/'),
+      items
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+adminApp.get('/api/admin/fs/download', requireAdminAuth, (req, res) => {
+  try {
+    const { serverId, filepath } = req.query;
+    if (!filepath) return res.status(400).json({ success: false, error: 'Не указан файл' });
+    const { targetPath } = resolveSafePath(serverId, filepath);
+
+    if (!fs.existsSync(targetPath)) {
+      return res.status(404).json({ success: false, error: 'Файл не найден' });
+    }
+    const stat = fs.statSync(targetPath);
+    if (stat.isDirectory()) {
+      return res.status(400).json({ success: false, error: 'Путь ведет к папке, используйте скачивание ZIP' });
+    }
+
+    res.download(targetPath, path.basename(targetPath));
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+adminApp.get('/api/admin/fs/download-zip', requireAdminAuth, (req, res) => {
+  try {
+    const { serverId, subpath = '' } = req.query;
+    const { targetPath, normalizedSubpath } = resolveSafePath(serverId, subpath);
+
+    if (!fs.existsSync(targetPath)) {
+      return res.status(404).json({ success: false, error: 'Папка не найдена' });
+    }
+    const stat = fs.statSync(targetPath);
+    if (!stat.isDirectory()) {
+      return res.status(400).json({ success: false, error: 'Путь не является директорией' });
+    }
+
+    const zipBaseName = normalizedSubpath ? path.basename(normalizedSubpath) : serverId;
+    const zipName = `${zipBaseName}.zip`;
+    const tempZip = path.join(os.tmpdir(), `fs_export_${Date.now()}_${Math.random().toString(36).slice(2)}.zip`);
+
+    execFile('zip', ['-r', tempZip, '.'], { cwd: targetPath }, (err, stdout, stderr) => {
+      if (err && !fs.existsSync(tempZip)) {
+        return res.status(500).json({ success: false, error: 'Ошибка создания ZIP архива: ' + (stderr || err.message) });
+      }
+      res.download(tempZip, zipName, () => {
+        try { if (fs.existsSync(tempZip)) fs.unlinkSync(tempZip); } catch (e) {}
+      });
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+adminApp.post('/api/admin/fs/upload', requireAdminAuth, (req, res) => {
+  fmUpload.array('files', 100)(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    const files = req.files || [];
+    res.json({ success: true, count: files.length });
+  });
+});
+
+adminApp.post('/api/admin/fs/mkdir', requireAdminAuth, (req, res) => {
+  try {
+    const { serverId, subpath = '', dirName } = req.body;
+    if (!dirName || typeof dirName !== 'string') {
+      return res.status(400).json({ success: false, error: 'Не указано имя папки' });
+    }
+    const cleanDirName = path.basename(dirName).replace(/[^a-zA-Z0-9_\-\. ]/g, '_');
+    if (!cleanDirName) {
+      return res.status(400).json({ success: false, error: 'Некорректное имя папки' });
+    }
+
+    const { targetPath } = resolveSafePath(serverId, subpath);
+    const newDirPath = path.join(targetPath, cleanDirName);
+    if (fs.existsSync(newDirPath)) {
+      return res.status(400).json({ success: false, error: 'Папка уже существует' });
+    }
+
+    fs.mkdirSync(newDirPath, { recursive: true });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+adminApp.post('/api/admin/fs/delete', requireAdminAuth, (req, res) => {
+  try {
+    const { serverId, filepath } = req.body;
+    if (!filepath || filepath === '/' || filepath === '.') {
+      return res.status(400).json({ success: false, error: 'Нельзя удалить корневую папку напрямую' });
+    }
+    const { serverRoot, targetPath } = resolveSafePath(serverId, filepath);
+    if (targetPath === serverRoot) {
+      return res.status(400).json({ success: false, error: 'Удаление всего сервера выполняется через отдельную кнопку' });
+    }
+
+    if (!fs.existsSync(targetPath)) {
+      return res.status(404).json({ success: false, error: 'Файл или папка не найдены' });
+    }
+
+    fs.rmSync(targetPath, { recursive: true, force: true });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+adminApp.post('/api/admin/fs/delete-server', requireAdminAuth, (req, res) => {
+  try {
+    const { serverId, confirmText } = req.body;
+    if (!serverId) return res.status(400).json({ success: false, error: 'Не указан serverId' });
+    if (confirmText !== serverId) {
+      return res.status(400).json({ success: false, error: 'Подтверждение не совпадает' });
+    }
+
+    const active = db.prepare('SELECT id FROM servers WHERE id = ?').get(serverId);
+    if (active) {
+      return res.status(400).json({ success: false, error: 'Нельзя удалить активный синхронизируемый сервер' });
+    }
+
+    const { serverRoot } = resolveSafePath(serverId, '');
+    if (fs.existsSync(serverRoot)) {
+      fs.rmSync(serverRoot, { recursive: true, force: true });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+adminApp.post('/api/admin/fs/migrate-archive', requireAdminAuth, (req, res) => {
+  try {
+    const { sourceServerId, targetServerId, options = {} } = req.body;
+    if (!sourceServerId || !targetServerId) {
+      return res.status(400).json({ success: false, error: 'Укажите исходный и целевой серверы' });
+    }
+    const { serverRoot: sourceDir } = resolveSafePath(sourceServerId, '');
+    const { serverRoot: targetDir } = resolveSafePath(targetServerId, '');
+
+    if (!fs.existsSync(sourceDir)) {
+      return res.status(404).json({ success: false, error: 'Папка исходного сервера не найдена' });
+    }
+    if (!fs.existsSync(targetDir)) {
+      return res.status(404).json({ success: false, error: 'Папка целевого сервера не найдена' });
+    }
+
+    let copiedShaders = 0;
+    let copiedResourcepacks = 0;
+    let copiedMods = 0;
+
+    // 1. Shaders
+    if (options.copyShaders) {
+      const srcShaders = path.join(sourceDir, 'shaderpacks');
+      const dstShaders = path.join(targetDir, 'shaderpacks');
+      if (fs.existsSync(srcShaders)) {
+        if (!fs.existsSync(dstShaders)) fs.mkdirSync(dstShaders, { recursive: true });
+        const files = fs.readdirSync(srcShaders);
+        for (const f of files) {
+          const sFile = path.join(srcShaders, f);
+          if (fs.statSync(sFile).isFile()) {
+            fs.copyFileSync(sFile, path.join(dstShaders, f));
+            copiedShaders++;
+          }
+        }
+      }
+    }
+
+    // 2. Resource packs
+    if (options.copyResourcepacks) {
+      const srcRp = path.join(sourceDir, 'resourcepacks');
+      const dstRp = path.join(targetDir, 'resourcepacks');
+      if (fs.existsSync(srcRp)) {
+        if (!fs.existsSync(dstRp)) fs.mkdirSync(dstRp, { recursive: true });
+        const files = fs.readdirSync(srcRp);
+        for (const f of files) {
+          const sFile = path.join(srcRp, f);
+          if (fs.statSync(sFile).isFile()) {
+            fs.copyFileSync(sFile, path.join(dstRp, f));
+            copiedResourcepacks++;
+          }
+        }
+      }
+    }
+
+    // 3. Client Mods & client_mods.json
+    if (options.copyClientMods) {
+      const srcClientJson = path.join(sourceDir, 'client_mods.json');
+      const dstClientJson = path.join(targetDir, 'client_mods.json');
+      const srcMods = path.join(sourceDir, 'mods');
+      const dstMods = path.join(targetDir, 'mods');
+      if (fs.existsSync(srcClientJson) && fs.existsSync(srcMods)) {
+        if (!fs.existsSync(dstMods)) fs.mkdirSync(dstMods, { recursive: true });
+        let srcList = [];
+        try { srcList = JSON.parse(fs.readFileSync(srcClientJson, 'utf8')); } catch (e) {}
+        let dstList = [];
+        try { if (fs.existsSync(dstClientJson)) dstList = JSON.parse(fs.readFileSync(dstClientJson, 'utf8')); } catch (e) {}
+
+        const dstSet = new Set(dstList);
+        for (const modName of srcList) {
+          const sMod = path.join(srcMods, modName);
+          if (fs.existsSync(sMod) && fs.statSync(sMod).isFile()) {
+            fs.copyFileSync(sMod, path.join(dstMods, modName));
+            dstSet.add(modName);
+            copiedMods++;
+          }
+        }
+        fs.writeFileSync(dstClientJson, JSON.stringify(Array.from(dstSet), null, 2), 'utf8');
+      }
+    }
+
+    // 4. All Mods
+    if (options.copyAllMods) {
+      const srcMods = path.join(sourceDir, 'mods');
+      const dstMods = path.join(targetDir, 'mods');
+      if (fs.existsSync(srcMods)) {
+        if (!fs.existsSync(dstMods)) fs.mkdirSync(dstMods, { recursive: true });
+        const files = fs.readdirSync(srcMods);
+        for (const f of files) {
+          if (f.endsWith('.jar')) {
+            const sFile = path.join(srcMods, f);
+            if (fs.statSync(sFile).isFile()) {
+              fs.copyFileSync(sFile, path.join(dstMods, f));
+              copiedMods++;
+            }
+          }
+        }
+      }
+    }
+
+    // Update target server total_mods in DB
+    try {
+      const dstMods = path.join(targetDir, 'mods');
+      if (fs.existsSync(dstMods)) {
+        const count = fs.readdirSync(dstMods).filter(f => f.endsWith('.jar')).length;
+        db.prepare('UPDATE servers SET total_mods = ? WHERE id = ?').run(count, targetServerId);
+      }
+    } catch (e) {}
+
+    res.json({
+      success: true,
+      copiedShaders,
+      copiedResourcepacks,
+      copiedMods,
+      message: `Перенесено: ${copiedShaders} шейдеров, ${copiedResourcepacks} ресурспаков, ${copiedMods} модов`
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
