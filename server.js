@@ -486,12 +486,22 @@ async function syncWithDiscoPanelAPI() {
       serverHost = customHost.trim();
     }
 
-    let dpHost = '127.0.0.1';
-    try { dpHost = new URL(dpUrl).hostname; } catch(e) {}
-    // Ping Minecraft container directly via local dpHost, fallback to serverHost
-    const pingRes = await queryServerPing(s.port || 25565, dpHost, serverHost);
-    var realOnline = pingRes.online;
-    var realMaxOnline = pingRes.max || s.maxPlayers || 20;
+    let realOnline = 0;
+    let realMaxOnline = s.maxPlayersSlp || s.maxPlayers || 20;
+
+    // Priority 1: Use DiscoPanel API native playersOnline if available
+    if (typeof s.playersOnline === 'number') {
+      realOnline = s.playersOnline;
+      realMaxOnline = s.maxPlayersSlp || s.maxPlayers || 20;
+      console.log(`[Sync] DiscoPanel API reports ${s.name} online: ${realOnline}/${realMaxOnline}`);
+    } else {
+      // Fallback: Direct TCP ping to Minecraft container
+      let dpHost = '127.0.0.1';
+      try { dpHost = new URL(dpUrl).hostname; } catch(e) {}
+      const pingRes = await queryServerPing(s.port || 25565, dpHost, serverHost);
+      realOnline = pingRes.online;
+      realMaxOnline = pingRes.max || realMaxOnline;
+    }
 
     db.prepare(`
       INSERT INTO servers (id, name, subtitle, version, modloader, ip, port, online, max_online, status, description, total_mods, manifest_url)
@@ -623,16 +633,43 @@ launcherApp.get('/api/servers', async (req, res) => {
   let adminDpHost = '127.0.0.1';
   try { adminDpHost = new URL(dpUrlSetting).hostname; } catch(e) {}
 
+  let adminDpMap = new Map();
+  if (dpToken && dpUrl) {
+    try {
+      const dpRes = await fetch(`${dpUrl}/discopanel.v1.ServerService/ListServers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dpToken}` },
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(2500)
+      });
+      if (dpRes.ok) {
+        const dpData = await dpRes.json();
+        (dpData.servers || []).forEach(srv => adminDpMap.set(srv.id, srv));
+      }
+    } catch(e) {}
+  }
+
   for (const s of servers) {
-    const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
-    const pInfo = await queryServerPing(s.port || 25565, adminDpHost, customHost || s.ip);
-    if (pInfo && pInfo.success) {
-      s.online = pInfo.online;
-      s.max_online = pInfo.max;
-      s.maxOnline = pInfo.max;
+    const dpSrv = adminDpMap.get(s.id);
+    if (dpSrv && typeof dpSrv.playersOnline === 'number') {
+      s.online = dpSrv.playersOnline;
+      s.max_online = dpSrv.maxPlayersSlp || dpSrv.maxPlayers || s.max_online || 20;
+      s.maxOnline = s.max_online;
+      s.playerSample = dpSrv.playerSample || [];
       try {
         db.prepare('UPDATE servers SET online = ?, max_online = ? WHERE id = ?').run(s.online, s.max_online, s.id);
       } catch(e) {}
+    } else {
+      const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
+      const pInfo = await queryServerPing(s.port || 25565, adminDpHost, customHost || s.ip);
+      if (pInfo && pInfo.success) {
+        s.online = pInfo.online;
+        s.max_online = pInfo.max;
+        s.maxOnline = pInfo.max;
+        try {
+          db.prepare('UPDATE servers SET online = ?, max_online = ? WHERE id = ?').run(s.online, s.max_online, s.id);
+        } catch(e) {}
+      }
     }
   }
   servers.forEach(s => {
@@ -2826,21 +2863,51 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
 adminApp.get('/api/admin/live-stats', requireAdminAuth, async (req, res) => {
   const servers = db.prepare('SELECT id, name, ip, port, online, max_online, status FROM servers').all();
   const dpUrlSetting = getSetting('discopanel_url', 'http://192.168.10.127:8080');
+  const dpTokenSetting = getSetting('discopanel_token');
+
+  // Map of DiscoPanel server data if available
+  let dpServersMap = new Map();
+  if (dpTokenSetting && dpUrlSetting) {
+    try {
+      const dpRes = await fetch(`${dpUrlSetting}/discopanel.v1.ServerService/ListServers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dpTokenSetting}` },
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(2500)
+      });
+      if (dpRes.ok) {
+        const dpData = await dpRes.json();
+        (dpData.servers || []).forEach(srv => dpServersMap.set(srv.id, srv));
+      }
+    } catch(e) {}
+  }
+
   let adminDpHost = '127.0.0.1';
   try { adminDpHost = new URL(dpUrlSetting).hostname; } catch(e) {}
 
   for (const s of servers) {
-    const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
-    const pInfo = await queryServerPing(s.port || 25565, adminDpHost, customHost || s.ip);
-    if (pInfo && pInfo.success) {
-      s.online = pInfo.online;
-      s.max_online = pInfo.max;
-      s.maxOnline = pInfo.max;
+    const dpSrv = dpServersMap.get(s.id);
+    if (dpSrv && typeof dpSrv.playersOnline === 'number') {
+      s.online = dpSrv.playersOnline;
+      s.max_online = dpSrv.maxPlayersSlp || dpSrv.maxPlayers || s.max_online || 20;
+      s.maxOnline = s.max_online;
+      s.playerSample = dpSrv.playerSample || [];
       try {
         db.prepare('UPDATE servers SET online = ?, max_online = ? WHERE id = ?').run(s.online, s.max_online, s.id);
       } catch(e) {}
     } else {
-      s.maxOnline = s.max_online || 20;
+      const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
+      const pInfo = await queryServerPing(s.port || 25565, adminDpHost, customHost || s.ip);
+      if (pInfo && pInfo.success) {
+        s.online = pInfo.online;
+        s.max_online = pInfo.max;
+        s.maxOnline = pInfo.max;
+        try {
+          db.prepare('UPDATE servers SET online = ?, max_online = ? WHERE id = ?').run(s.online, s.max_online, s.id);
+        } catch(e) {}
+      } else {
+        s.maxOnline = s.max_online || 20;
+      }
     }
   }
   const totalPlayersOnline = servers.reduce((acc, s) => acc + (s.online || 0), 0);
