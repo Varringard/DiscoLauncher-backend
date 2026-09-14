@@ -77,6 +77,23 @@ function setSetting(key, value) {
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
 }
 
+// Parse domain or IP with optional port (default 25565 if port omitted)
+function parseHostAndPort(raw, defaultHost = '127.0.0.1', defaultPort = 25565) {
+  if (!raw || !raw.trim()) {
+    return { host: defaultHost, port: defaultPort, raw: '' };
+  }
+  const clean = raw.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  if (clean.includes(':')) {
+    const lastColon = clean.lastIndexOf(':');
+    const h = clean.substring(0, lastColon).trim();
+    const p = parseInt(clean.substring(lastColon + 1).trim(), 10);
+    if (!isNaN(p) && p > 0 && p <= 65535) {
+      return { host: h || defaultHost, port: p, raw: clean };
+    }
+  }
+  return { host: clean, port: 25565, raw: clean };
+}
+
 // Initial DiscoPanel config defaults
 if (!getSetting('discopanel_url')) {
   setSetting('discopanel_url', '');
@@ -536,9 +553,12 @@ async function syncWithDiscoPanelAPI() {
     const isRunning = s.status === 'SERVER_STATUS_RUNNING';
     let serverHost = '127.0.0.1';
     try { serverHost = new URL(dpUrl).hostname; } catch(e) {}
+    let serverPort = s.port || 25565;
     const customHost = getSetting('public_server_host_' + srvId) || getSetting('public_server_host');
     if (customHost && customHost.trim()) {
-      serverHost = customHost.trim();
+      const parsed = parseHostAndPort(customHost, serverHost, serverPort);
+      serverHost = parsed.host;
+      serverPort = parsed.port;
     }
 
     let realOnline = 0;
@@ -553,7 +573,7 @@ async function syncWithDiscoPanelAPI() {
       // Fallback: Direct TCP ping to Minecraft container
       let dpHost = '127.0.0.1';
       try { dpHost = new URL(dpUrl).hostname; } catch(e) {}
-      const pingRes = await queryServerPing(s.port || 25565, dpHost, serverHost);
+      const pingRes = await queryServerPing(serverPort, dpHost, serverHost);
       realOnline = pingRes.online;
       realMaxOnline = pingRes.max || realMaxOnline;
     }
@@ -580,7 +600,7 @@ async function syncWithDiscoPanelAPI() {
       s.mcVersion || '1.21.5',
       modLoaderClean,
       serverHost,
-      s.port || 25565,
+      serverPort,
       realOnline,
       realMaxOnline,
       isRunning ? 'online' : 'offline',
@@ -747,7 +767,9 @@ launcherApp.get('/api/servers', async (req, res) => {
     s.total_mods = s.totalMods;
     const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
     if (customHost && customHost.trim()) {
-      s.ip = customHost.trim();
+      const parsed = parseHostAndPort(customHost, s.ip, s.port || 25565);
+      s.ip = parsed.host;
+      s.port = parsed.port;
     }
   });
   res.json(servers);
@@ -1111,7 +1133,9 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
     s.isModsSyncEnabled = getSetting('sync_mods_' + s.id, 'true') !== 'false';
     const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
     if (customHost && customHost.trim()) {
-      s.ip = customHost.trim();
+      const parsed = parseHostAndPort(customHost, s.ip, s.port || 25565);
+      s.ip = parsed.host;
+      s.port = parsed.port;
     }
     s.publicHost = customHost || '';
 
@@ -1641,16 +1665,19 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
                   <div>
                     <span class="text-xs font-bold text-white flex items-center gap-1.5">
                       <i class="fa-solid fa-globe text-cyan-400"></i>
-                      Public Server Address (Domain or external IP)
+                      Публичный адрес сервера (домен или IP с портом)
                     </span>
-                    <p class="text-[11px] text-slate-400 mt-0.5">Players connect to this address from the launcher: <code class="text-cyan-300 font-mono font-bold">${s.ip}:${s.port}</code></p>
+                    <p class="text-[11px] text-slate-400 mt-0.5">Игроки в лаунчере подключаются по адресу: <code class="text-cyan-300 font-mono font-bold">${s.ip}:${s.port}</code></p>
                   </div>
-                  <div class="flex items-center gap-2 max-w-md">
-                    <input type="text" id="hostInput_${s.id}" value="${s.publicHost || ''}" placeholder="e.g. mc.example.com" class="flex-1 bg-[#12141c] border border-slate-700 rounded-lg px-3.5 py-2 text-xs text-cyan-300 font-mono focus:border-indigo-500 focus:outline-none">
+                  <div class="flex items-center gap-2 max-w-lg">
+                    <input type="text" id="hostInput_${s.id}" value="${s.publicHost || ''}" placeholder="например: mc.varrimain.site или 95.78.23.54:25565" class="flex-1 bg-[#12141c] border border-slate-700 rounded-lg px-3.5 py-2 text-xs text-cyan-300 font-mono focus:border-indigo-500 focus:outline-none">
                     <button onclick="savePublicHost('${s.id}')" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shrink-0">
-                      Save
+                      Сохранить
                     </button>
                   </div>
+                  <p class="text-[11px] text-slate-500">
+                    Введите домен или IP целиком (например, <code class="text-slate-400">mc.varrimain.site</code> или <code class="text-slate-400">mc.varrimain.site:25565</code>). Если порт не указан, по умолчанию используется стандартный порт Minecraft <b>25565</b>.
+                  </p>
                 </div>
               </div>
 
@@ -3176,13 +3203,14 @@ adminApp.post('/api/admin/servers/:id/public-host', requireAdminAuth, (req, res)
   const cleanHost = (host || '').trim();
   setSetting('public_server_host_' + serverId, cleanHost);
   if (cleanHost) {
-    db.prepare('UPDATE servers SET ip = ? WHERE id = ?').run(cleanHost, serverId);
+    const parsed = parseHostAndPort(cleanHost);
+    db.prepare('UPDATE servers SET ip = ?, port = ? WHERE id = ?').run(parsed.host, parsed.port, serverId);
   } else {
-    // Revert to DiscoPanel IP
+    // Revert to DiscoPanel IP and default port
     const dpUrl = getSetting('discopanel_url', 'http://192.168.10.127:8080');
     let fallbackIp = '192.168.10.127';
     try { fallbackIp = new URL(dpUrl).hostname; } catch(e) {}
-    db.prepare('UPDATE servers SET ip = ? WHERE id = ?').run(fallbackIp, serverId);
+    db.prepare('UPDATE servers SET ip = ?, port = 25565 WHERE id = ?').run(fallbackIp, serverId);
   }
   res.json({ success: true, host: cleanHost });
 });
