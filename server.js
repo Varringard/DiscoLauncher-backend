@@ -459,6 +459,12 @@ async function syncWithDiscoPanelAPI() {
           }
         }
 
+        // Save full list of server mods from DiscoPanel
+        const dpModsFile = path.join(srvDir, 'dp_mods.json');
+        try {
+          fs.writeFileSync(dpModsFile, JSON.stringify(Array.from(dpModFileNames), null, 2));
+        } catch (e) {}
+
         // Clean up server-side mods that are no longer in DiscoPanel
         const clientModsFile = path.join(srvDir, 'client_mods.json');
         let clientMods = [];
@@ -1055,23 +1061,50 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
     } catch(e) {}
     const disabledModsSet = new Set(disabledMods);
 
-    s.modsList = allMods.map(m => {
+    // Read dp_mods.json (mods present on the Minecraft server via DiscoPanel)
+    const dpModsFile = path.join(SERVERS_DIR, s.id, 'dp_mods.json');
+    let dpMods = [];
+    try {
+      if (fs.existsSync(dpModsFile)) {
+        dpMods = JSON.parse(fs.readFileSync(dpModsFile, 'utf8'));
+      }
+    } catch(e) {}
+    const dpModsSet = new Set(dpMods);
+
+    // If dp_mods.json not yet written, fallback to local jar files
+    const serverModNames = dpMods.length > 0 ? dpMods : allMods;
+
+    s.serverModsList = serverModNames.map(m => {
       let sizeMb = '0.0';
       try {
         const stat = fs.statSync(path.join(modsDir, m));
         sizeMb = (stat.size / (1024 * 1024)).toFixed(1);
       } catch (e) {}
       const isClient = clientModsSet.has(m);
-      const isEnabled = !disabledModsSet.has(m);
       return {
         name: m,
         isClient,
-        isEnabled,
         sizeMb
       };
     });
-    s.clientModsList = s.modsList.filter(m => m.isClient);
-    s.serverModsList = s.modsList.filter(m => !m.isClient);
+
+    s.clientModsList = allMods.filter(m => clientModsSet.has(m)).map(m => {
+      let sizeMb = '0.0';
+      try {
+        const stat = fs.statSync(path.join(modsDir, m));
+        sizeMb = (stat.size / (1024 * 1024)).toFixed(1);
+      } catch (e) {}
+      const isEnabled = !disabledModsSet.has(m);
+      const isFromServer = dpModsSet.has(m);
+      return {
+        name: m,
+        isClient: true,
+        isEnabled,
+        isFromServer,
+        sizeMb
+      };
+    });
+
     s.totalMods = s.clientModsList.length;
     s.enabledModsCount = s.clientModsList.filter(m => m.isEnabled).length;
     s.disabledModsCount = s.clientModsList.length - s.enabledModsCount;
@@ -1442,7 +1475,9 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
 
                             <!-- Badges & Delete -->
                             <div class="flex items-center gap-2 shrink-0">
-                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Client-side</span>
+                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold ${m.isFromServer ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' : 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'}">
+                                ${m.isFromServer ? 'DiscoPanel + Client' : 'Client-only'}
+                              </span>
                               <button onclick="deleteMod('${s.id}', '${m.name}')" title="Удалить из клиентских модов" class="p-1.5 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors">
                                 <i class="fa-solid fa-trash-can text-xs"></i>
                               </button>
@@ -1459,17 +1494,18 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
                   <div class="p-3 rounded-xl bg-purple-950/20 border border-purple-800/30 text-xs text-purple-200 flex items-start gap-2.5">
                     <i class="fa-solid fa-circle-info text-purple-400 mt-0.5 shrink-0"></i>
                     <div>
-                      <div class="font-bold text-white text-xs">Моды игрового сервера (DiscoPanel)</div>
+                      <div class="font-bold text-white text-xs">Моды игрового сервера (DiscoPanel) &bull; Установлено на сервере: ${s.serverModsList.length}</div>
                       <div class="text-[11px] text-slate-400 mt-0.5">
-                        Эти моды установлены на самом сервере Minecraft. Игрокам в лаунчер они <b>НЕ скачиваются</b>.
-                        Если какой-то мод требуется и на клиенте (например, VoiceChat или Fabric API), нажмите кнопку <b>«Импортировать для игроков»</b>, чтобы перенести его в клиентские.
+                        Здесь отображаются все моды, установленные на сервере Minecraft.
+                        Моды со статусом <span class="text-emerald-400 font-semibold">«Добавлен клиентам»</span> автоматически скачиваются игрокам в лаунчер.
+                        Моды со статусом <span class="text-purple-400 font-semibold">«Только сервер»</span> игрокам не передаются — нажмите <span class="text-indigo-300 font-semibold">«Импортировать для игроков»</span>, чтобы добавить мод в лаунчер.
                       </div>
                     </div>
                   </div>
 
                   ${s.serverModsList.length === 0 ? `
                     <div class="p-8 text-center bg-[#0b0c11] border border-dashed border-[#1a1d2b] rounded-xl text-xs text-slate-500">
-                      Нет неимпортированных серверных модов. Все моды сервера уже добавлены в клиентские либо ещё не синхронизированы.
+                      Моды сервера ещё не синхронизированы с DiscoPanel. Нажмите «Синхронизировать сейчас» в настройках API.
                     </div>
                   ` : `
                     <div class="bg-[#0b0c11] border border-[#1a1d2b] rounded-xl overflow-hidden">
@@ -1477,22 +1513,32 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
                         ${s.serverModsList.map(m => `
                           <div id="modRow_${s.id}_${encodeURIComponent(m.name)}" data-name="${m.name.toLowerCase()}" class="flex items-center justify-between p-3 hover:bg-[#121520] transition-colors gap-3">
                             <div class="flex items-center gap-3 min-w-0">
-                              <i class="fa-solid fa-server text-purple-400 text-xs shrink-0"></i>
+                              <i class="fa-solid fa-server ${m.isClient ? 'text-emerald-400' : 'text-purple-400'} text-xs shrink-0"></i>
                               <div class="min-w-0">
                                 <div class="text-xs font-medium font-mono text-slate-200 truncate">
                                   ${m.name}
                                 </div>
                                 <div class="text-[10px] text-slate-500 font-sans mt-0.5">
-                                  ${m.sizeMb} MB &bull; <span class="text-purple-400 font-semibold">Только сервер (DiscoPanel)</span>
+                                  ${m.sizeMb} MB &bull; ${m.isClient ? '<span class="text-emerald-400 font-semibold"><i class="fa-solid fa-check"></i> Импортирован для игроков (скачивается в лаунчер)</span>' : '<span class="text-purple-400 font-semibold">Только сервер (DiscoPanel)</span>'}
                                 </div>
                               </div>
                             </div>
 
                             <div class="flex items-center gap-2 shrink-0">
-                              <button type="button" onclick="importDpMod('${s.id}', '${m.name}')" class="px-3 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm">
-                                <i class="fa-solid fa-plus text-xs"></i>
-                                <span>Импортировать для игроков</span>
-                              </button>
+                              ${m.isClient ? `
+                                <span class="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold flex items-center gap-1.5">
+                                  <i class="fa-solid fa-check text-xs"></i>
+                                  <span>Добавлен клиентам</span>
+                                </span>
+                                <button type="button" onclick="unimportDpMod('${s.id}', '${m.name}')" title="Убрать из модов для игроков" class="p-1.5 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors">
+                                  <i class="fa-solid fa-xmark text-xs"></i>
+                                </button>
+                              ` : `
+                                <button type="button" onclick="importDpMod('${s.id}', '${m.name}')" class="px-3 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm">
+                                  <i class="fa-solid fa-plus text-xs"></i>
+                                  <span>Импортировать для игроков</span>
+                                </button>
+                              `}
                             </div>
                           </div>
                         `).join('')}
@@ -2940,6 +2986,25 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
       }
     }
 
+    async function unimportDpMod(serverId, filename) {
+      if (!confirm('Убрать мод "' + filename + '" из списка для игроков? На самом сервере мод останется.')) return;
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/unimport-dp-mod', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename })
+        });
+        const d = await res.json();
+        if (d.success) {
+          window.location.reload();
+        } else {
+          alert('Ошибка: ' + (d.error || 'Ошибка'));
+        }
+      } catch (err) {
+        alert('Ошибка: ' + err.message);
+      }
+    }
+
     function filterModRows(serverId, query) {
       const q = (query || '').toLowerCase().trim();
       const panes = ['client', 'server'];
@@ -3188,9 +3253,21 @@ adminApp.post('/api/admin/servers/:id/delete-mod', requireAdminAuth, (req, res) 
   if (!filename) return res.status(400).json({ success: false, error: 'Filename not specified' });
 
   const safeFilename = path.basename(filename);
-  const targetPath = path.join(SERVERS_DIR, serverId, 'mods', safeFilename);
-  if (fs.existsSync(targetPath)) {
-    fs.unlinkSync(targetPath);
+
+  // If this mod is from DiscoPanel, keep the server jar on disk and just unimport from client_mods.json
+  const dpModsPath = path.join(SERVERS_DIR, serverId, 'dp_mods.json');
+  let dpMods = [];
+  try {
+    if (fs.existsSync(dpModsPath)) {
+      dpMods = JSON.parse(fs.readFileSync(dpModsPath, 'utf8'));
+    }
+  } catch (e) {}
+
+  if (!dpMods.includes(safeFilename)) {
+    const targetPath = path.join(SERVERS_DIR, serverId, 'mods', safeFilename);
+    if (fs.existsSync(targetPath)) {
+      try { fs.unlinkSync(targetPath); } catch(e) {}
+    }
   }
 
   // Remove from client_mods.json
@@ -3233,6 +3310,30 @@ adminApp.post('/api/admin/servers/:id/import-dp-mod', requireAdminAuth, (req, re
 
   // Update total_mods in DB
   db.prepare('UPDATE servers SET total_mods = ? WHERE id = ?').run(clientMods.length, serverId);
+
+  res.json({ success: true, filename: safeFilename });
+});
+
+// Unimport mod from client mods (removes from client_mods.json, leaves jar on server)
+adminApp.post('/api/admin/servers/:id/unimport-dp-mod', requireAdminAuth, (req, res) => {
+  const serverId = req.params.id;
+  const { filename } = req.body;
+  if (!filename) return res.status(400).json({ success: false, error: 'Filename not specified' });
+
+  const safeFilename = path.basename(filename);
+  const clientModsPath = path.join(SERVERS_DIR, serverId, 'client_mods.json');
+  let clientMods = [];
+  try {
+    if (fs.existsSync(clientModsPath)) {
+      clientMods = JSON.parse(fs.readFileSync(clientModsPath, 'utf8'));
+      clientMods = clientMods.filter(n => n !== safeFilename);
+      fs.writeFileSync(clientModsPath, JSON.stringify(clientMods, null, 2));
+    }
+  } catch (e) {}
+
+  // Update total_mods in DB
+  const count = clientMods.length;
+  db.prepare('UPDATE servers SET total_mods = ? WHERE id = ?').run(count, serverId);
 
   res.json({ success: true, filename: safeFilename });
 });
