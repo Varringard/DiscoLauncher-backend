@@ -311,20 +311,43 @@ function mcPing(host, port, timeout) {
 }
 
 var _mcPingCache = {};
-var MC_PING_TTL = 25000;
+var MC_PING_TTL = 10000;
 
 function getCachedMcOnline(ip, port) {
   var key = ip + ':' + port;
   var now = Date.now();
   if (_mcPingCache[key] && now - _mcPingCache[key].ts < MC_PING_TTL) {
-    return Promise.resolve(_mcPingCache[key].online);
+    return Promise.resolve(_mcPingCache[key]);
   }
-  return mcPing(ip, port).then(function(r) {
-    var online = r ? r.online : 0;
-    _mcPingCache[key] = { online: online, ts: Date.now() };
-    console.log('[MC Ping] ' + ip + ':' + port + ' -> ' + online + ' players online');
-    return online;
-  }).catch(function() { return 0; });
+  return mcPing(ip, port, 3000).then(function(r) {
+    var info = {
+      online: r ? (r.online || 0) : 0,
+      max: r ? (r.max || 20) : 20,
+      success: !!r
+    };
+    _mcPingCache[key] = { online: info.online, max: info.max, success: info.success, ts: Date.now() };
+    if (r) {
+      console.log('[MC Ping] ' + ip + ':' + port + ' -> ' + info.online + '/' + info.max + ' players online');
+    }
+    return info;
+  }).catch(function() {
+    return { online: 0, max: 20, success: false };
+  });
+}
+
+async function queryServerPing(port, dpHost, serverHost) {
+  if (dpHost) {
+    const res = await getCachedMcOnline(dpHost, port);
+    if (res.success) return res;
+  }
+  if (serverHost && serverHost !== dpHost) {
+    const res = await getCachedMcOnline(serverHost, port);
+    if (res.success) return res;
+  }
+  const localRes = await getCachedMcOnline('127.0.0.1', port);
+  if (localRes.success) return localRes;
+
+  return { online: 0, max: 20, success: false };
 }
 
 
@@ -463,8 +486,12 @@ async function syncWithDiscoPanelAPI() {
       serverHost = customHost.trim();
     }
 
-    // Ping the real Minecraft server for accurate player count
-    var realOnline = await getCachedMcOnline(serverHost, s.port || 25565);
+    let dpHost = '127.0.0.1';
+    try { dpHost = new URL(dpUrl).hostname; } catch(e) {}
+    // Ping Minecraft container directly via local dpHost, fallback to serverHost
+    const pingRes = await queryServerPing(s.port || 25565, dpHost, serverHost);
+    var realOnline = pingRes.online;
+    var realMaxOnline = pingRes.max || s.maxPlayers || 20;
 
     db.prepare(`
       INSERT INTO servers (id, name, subtitle, version, modloader, ip, port, online, max_online, status, description, total_mods, manifest_url)
@@ -490,7 +517,7 @@ async function syncWithDiscoPanelAPI() {
       serverHost,
       s.port || 25565,
       realOnline,
-      s.maxPlayers || 100,
+      realMaxOnline,
       isRunning ? 'online' : 'offline',
       s.description || 'DiscoPanel Game Server',
       modCount,
@@ -590,8 +617,24 @@ launcherApp.get('/api/auth/verify', authenticatePlayerToken, (req, res) => {
 });
 
 // Servers & Manifest Routes
-launcherApp.get('/api/servers', (req, res) => {
+launcherApp.get('/api/servers', async (req, res) => {
   const servers = db.prepare('SELECT * FROM servers').all();
+  const dpUrlSetting = getSetting('discopanel_url', 'http://192.168.10.127:8080');
+  let adminDpHost = '127.0.0.1';
+  try { adminDpHost = new URL(dpUrlSetting).hostname; } catch(e) {}
+
+  for (const s of servers) {
+    const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
+    const pInfo = await queryServerPing(s.port || 25565, adminDpHost, customHost || s.ip);
+    if (pInfo && pInfo.success) {
+      s.online = pInfo.online;
+      s.max_online = pInfo.max;
+      s.maxOnline = pInfo.max;
+      try {
+        db.prepare('UPDATE servers SET online = ?, max_online = ? WHERE id = ?').run(s.online, s.max_online, s.id);
+      } catch(e) {}
+    }
+  }
   servers.forEach(s => {
     s.maxOnline = s.max_online || 100;
     s.manifestUrl = s.manifest_url || `/api/servers/${s.id}/manifest`;
@@ -857,8 +900,24 @@ adminApp.post('/api/logout', (req, res) => {
 });
 
 // Admin Dashboard Route
-adminApp.get('/admin', requireAdminAuth, (req, res) => {
+adminApp.get('/admin', requireAdminAuth, async (req, res) => {
   const servers = db.prepare('SELECT * FROM servers').all();
+  const dpUrlSetting = getSetting('discopanel_url', 'http://192.168.10.127:8080');
+  let adminDpHost = '127.0.0.1';
+  try { adminDpHost = new URL(dpUrlSetting).hostname; } catch(e) {}
+
+  for (const s of servers) {
+    const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
+    const pInfo = await queryServerPing(s.port || 25565, adminDpHost, customHost || s.ip);
+    if (pInfo && pInfo.success) {
+      s.online = pInfo.online;
+      s.max_online = pInfo.max;
+      s.maxOnline = pInfo.max;
+      try {
+        db.prepare('UPDATE servers SET online = ?, max_online = ? WHERE id = ?').run(s.online, s.max_online, s.id);
+      } catch(e) {}
+    }
+  }
   const users = db.prepare('SELECT id, username, uuid, skin_url, created_at FROM users ORDER BY id DESC').all();
   const dpUrl = getSetting('discopanel_url', 'http://192.168.10.127:8080');
   const dpToken = getSetting('discopanel_token', '');
@@ -1172,7 +1231,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
                   <i class="fa-solid fa-users text-emerald-400"></i> PLAYERS
                 </div>
                 <div class="text-sm font-bold font-mono mt-1">
-                  <span class="text-emerald-400 font-bold">${s.online || 0}</span> <span class="text-slate-500">/ ${s.maxOnline}</span>
+                  <span id="serverOnline_${s.id}" class="text-emerald-400 font-bold">${s.online || 0}</span> <span class="text-slate-500">/ <span id="serverMaxOnline_${s.id}">${s.maxOnline}</span></span>
                 </div>
               </div>
 
@@ -1478,7 +1537,7 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
 
         <div class="p-5 rounded-2xl bg-[#11131a] border border-[#1b1e2a]">
           <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Online Players</div>
-          <div class="text-3xl font-black text-emerald-400 font-mono mt-2">${totalPlayersOnline}</div>
+          <div id="dashTotalPlayersOnline" class="text-3xl font-black text-emerald-400 font-mono mt-2">${totalPlayersOnline}</div>
           <div class="text-[11px] text-slate-400 mt-1">across all servers</div>
         </div>
 
@@ -2370,6 +2429,25 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
         .replace(/'/g, '&#039;');
     }
 
+    // Auto-refresh live server online stats
+    async function refreshLiveStats() {
+      try {
+        const res = await fetch('/api/admin/live-stats');
+        const data = await res.json();
+        if (data.success && data.servers) {
+          data.servers.forEach(function(s) {
+            const onEl = document.getElementById('serverOnline_' + s.id);
+            const maxEl = document.getElementById('serverMaxOnline_' + s.id);
+            if (onEl) onEl.textContent = s.online;
+            if (maxEl) maxEl.textContent = s.maxOnline;
+          });
+          const dashEl = document.getElementById('dashTotalPlayersOnline');
+          if (dashEl) dashEl.textContent = data.totalPlayersOnline;
+        }
+      } catch(e) {}
+    }
+    setInterval(refreshLiveStats, 6000);
+
     try {
       const savedNav = localStorage.getItem('discopanel_active_nav');
       if (savedNav) switchNav(savedNav);
@@ -2745,6 +2823,30 @@ adminApp.get('/admin', requireAdminAuth, (req, res) => {
 });
 
 // Admin API endpoints (all protected by requireAdminAuth)
+adminApp.get('/api/admin/live-stats', requireAdminAuth, async (req, res) => {
+  const servers = db.prepare('SELECT id, name, ip, port, online, max_online, status FROM servers').all();
+  const dpUrlSetting = getSetting('discopanel_url', 'http://192.168.10.127:8080');
+  let adminDpHost = '127.0.0.1';
+  try { adminDpHost = new URL(dpUrlSetting).hostname; } catch(e) {}
+
+  for (const s of servers) {
+    const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
+    const pInfo = await queryServerPing(s.port || 25565, adminDpHost, customHost || s.ip);
+    if (pInfo && pInfo.success) {
+      s.online = pInfo.online;
+      s.max_online = pInfo.max;
+      s.maxOnline = pInfo.max;
+      try {
+        db.prepare('UPDATE servers SET online = ?, max_online = ? WHERE id = ?').run(s.online, s.max_online, s.id);
+      } catch(e) {}
+    } else {
+      s.maxOnline = s.max_online || 20;
+    }
+  }
+  const totalPlayersOnline = servers.reduce((acc, s) => acc + (s.online || 0), 0);
+  res.json({ success: true, totalPlayersOnline, servers });
+});
+
 adminApp.post('/api/admin/config', requireAdminAuth, async (req, res) => {
   const { discopanel_url, discopanel_token } = req.body;
   if (discopanel_url) setSetting('discopanel_url', discopanel_url);
