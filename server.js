@@ -350,6 +350,34 @@ async function queryServerPing(port, dpHost, serverHost) {
   return { online: 0, max: 20, success: false };
 }
 
+// Known server-side only mods that should NOT be distributed to launcher clients by default
+const SERVER_ONLY_MOD_PATTERNS = [
+  /skinrestorer/i,
+  /skinsrestorer/i,
+  /^sleep/i,
+  /sleepmost/i,
+  /harbor/i,
+  /^spark/i,
+  /placeholder-?api/i,
+  /netherportalfix/i,
+  /chunky/i,
+  /luckperms/i,
+  /discordsrv/i,
+  /ledger/i,
+  /cardboard/i,
+  /geyser/i,
+  /floodgate/i,
+  /fastasyncworldedit/i,
+  /coreprotect/i,
+  /dynmap/i,
+  /bluemap/i,
+  /pl3xmap/i
+];
+
+function isKnownServerOnlyMod(fileName) {
+  if (!fileName) return false;
+  return SERVER_ONLY_MOD_PATTERNS.some(pat => pat.test(fileName));
+}
 
 async function syncWithDiscoPanelAPI() {
   const dpUrl = getSetting('discopanel_url', 'http://192.168.10.127:8080');
@@ -465,6 +493,18 @@ async function syncWithDiscoPanelAPI() {
             }
           }
         }
+        // Auto-disable known server-only mods so they are never served to clients by default
+        for (const m of mods) {
+          if (!m.enabled) continue;
+          if (isKnownServerOnlyMod(m.fileName) && !clientModsSet.has(m.fileName)) {
+            if (!disabledMods.includes(m.fileName)) {
+              disabledMods.push(m.fileName);
+              disabledModsChanged = true;
+              console.log(`[Sync] Auto-disabling server-only mod from client sync: ${m.fileName}`);
+            }
+          }
+        }
+
         if (disabledModsChanged) {
           try { fs.writeFileSync(disabledModsFile, JSON.stringify(disabledMods, null, 2)); } catch(e) {}
         }
@@ -699,6 +739,14 @@ launcherApp.get('/api/servers/:id/manifest', (req, res) => {
     if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
   }
 
+  const clientModsPath = path.join(serverDir, 'client_mods.json');
+  let clientModsSet = new Set();
+  try {
+    if (fs.existsSync(clientModsPath)) {
+      clientModsSet = new Set(JSON.parse(fs.readFileSync(clientModsPath, 'utf8')));
+    }
+  } catch (e) {}
+
   const disabledModsPath = path.join(serverDir, 'disabled_mods.json');
   let disabledMods = new Set();
   try {
@@ -716,6 +764,7 @@ launcherApp.get('/api/servers/:id/manifest', (req, res) => {
       if (disabledMods.has(ent.name)) continue;
       const fullPath = path.join(currentDir, ent.name);
       const relPath = path.posix.join(relativePrefix, ent.name);
+      if (relPath.startsWith('mods/') && isKnownServerOnlyMod(ent.name) && !clientModsSet.has(ent.name)) continue;
       if (ent.isDirectory()) {
         result = result.concat(scanDir(fullPath, relPath));
       } else {
@@ -994,10 +1043,14 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
         const stat = fs.statSync(path.join(modsDir, m));
         sizeMb = (stat.size / (1024 * 1024)).toFixed(1);
       } catch (e) {}
+      const isClient = clientModsSet.has(m);
+      const isServerOnly = isKnownServerOnlyMod(m) && !isClient;
+      const isEnabled = !disabledModsSet.has(m) && !isServerOnly;
       return {
         name: m,
-        isClient: clientModsSet.has(m),
-        isEnabled: !disabledModsSet.has(m),
+        isClient,
+        isServerOnly,
+        isEnabled,
         sizeMb
       };
     });
@@ -1364,8 +1417,10 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
                           <div class="flex items-center gap-2 shrink-0">
                             ${m.isClient ? `
                               <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Client-side</span>
+                            ` : m.isServerOnly ? `
+                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20" title="Чисто серверный мод (не скачивается игрокам)">Server-only</span>
                             ` : `
-                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">Server-side (DiscoPanel)</span>
+                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">DiscoPanel</span>
                             `}
                             <button onclick="deleteMod('${s.id}', '${m.name}')" title="Delete mod" class="p-1 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors">
                               <i class="fa-solid fa-trash-can text-xs"></i>
