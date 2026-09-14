@@ -513,8 +513,17 @@ async function syncWithDiscoPanelAPI() {
       console.log(`[Sync] DiscoPanel mods sync is disabled for server ${s.name}`);
     }
 
-    // Count all local mods in modsDir
-    const modCount = fs.existsSync(modsDir) ? fs.readdirSync(modsDir).filter(f => f.endsWith('.jar')).length : 0;
+    // Count client mods
+    const clientModsFileForCount = path.join(srvDir, 'client_mods.json');
+    let modCount = 0;
+    if (fs.existsSync(clientModsFileForCount)) {
+      try {
+        const cMods = JSON.parse(fs.readFileSync(clientModsFileForCount, 'utf8'));
+        modCount = cMods.length;
+      } catch (e) {}
+    } else if (fs.existsSync(modsDir)) {
+      modCount = fs.readdirSync(modsDir).filter(f => f.endsWith('.jar')).length;
+    }
 
     // 3. Update server in SQLite
     const modLoaderClean = (s.modLoader || '').replace('MOD_LOADER_', '').toLowerCase() || 'vanilla';
@@ -717,11 +726,19 @@ launcherApp.get('/api/servers', async (req, res) => {
     s.maxOnline = s.max_online || 100;
     s.manifestUrl = s.manifest_url || `/api/servers/${s.id}/manifest`;
     s.totalMods = 0;
-    const modsDir = path.join(SERVERS_DIR, s.id, 'mods');
-    if (fs.existsSync(modsDir)) {
-      s.totalMods = fs.readdirSync(modsDir).filter(f => f.endsWith('.jar')).length;
-      s.total_mods = s.totalMods;
+    const clientModsPath = path.join(SERVERS_DIR, s.id, 'client_mods.json');
+    if (fs.existsSync(clientModsPath)) {
+      try {
+        const cMods = JSON.parse(fs.readFileSync(clientModsPath, 'utf8'));
+        s.totalMods = cMods.length;
+      } catch(e) {}
+    } else {
+      const modsDir = path.join(SERVERS_DIR, s.id, 'mods');
+      if (fs.existsSync(modsDir)) {
+        s.totalMods = fs.readdirSync(modsDir).filter(f => f.endsWith('.jar')).length;
+      }
     }
+    s.total_mods = s.totalMods;
     const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
     if (customHost && customHost.trim()) {
       s.ip = customHost.trim();
@@ -763,8 +780,9 @@ launcherApp.get('/api/servers/:id/manifest', (req, res) => {
       if (ent.name.startsWith('.') || ent.name === 'client_mods.json' || ent.name === 'disabled_mods.json') continue;
       if (disabledMods.has(ent.name)) continue;
       const fullPath = path.join(currentDir, ent.name);
-      const relPath = path.posix.join(relativePrefix, ent.name);
-      if (relPath.startsWith('mods/') && isKnownServerOnlyMod(ent.name) && !clientModsSet.has(ent.name)) continue;
+      const relPath = relativePrefix ? `${relativePrefix}/${ent.name}` : ent.name;
+      // Only mods that are explicitly in client_mods.json are sent to launcher clients!
+      if (relPath.startsWith('mods/') && !clientModsSet.has(ent.name)) continue;
       if (ent.isDirectory()) {
         result = result.concat(scanDir(fullPath, relPath));
       } else {
@@ -1044,19 +1062,19 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
         sizeMb = (stat.size / (1024 * 1024)).toFixed(1);
       } catch (e) {}
       const isClient = clientModsSet.has(m);
-      const isServerOnly = isKnownServerOnlyMod(m) && !isClient;
-      const isEnabled = !disabledModsSet.has(m) && !isServerOnly;
+      const isEnabled = !disabledModsSet.has(m);
       return {
         name: m,
         isClient,
-        isServerOnly,
         isEnabled,
         sizeMb
       };
     });
-    s.totalMods = allMods.length;
-    s.enabledModsCount = s.modsList.filter(m => m.isEnabled).length;
-    s.disabledModsCount = s.totalMods - s.enabledModsCount;
+    s.clientModsList = s.modsList.filter(m => m.isClient);
+    s.serverModsList = s.modsList.filter(m => !m.isClient);
+    s.totalMods = s.clientModsList.length;
+    s.enabledModsCount = s.clientModsList.filter(m => m.isEnabled).length;
+    s.disabledModsCount = s.clientModsList.length - s.enabledModsCount;
     s.isModsSyncEnabled = getSetting('sync_mods_' + s.id, 'true') !== 'false';
     const customHost = getSetting('public_server_host_' + s.id) || getSetting('public_server_host');
     if (customHost && customHost.trim()) {
@@ -1365,11 +1383,22 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
                 
                 <!-- Mods Controls Bar -->
                 <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0b0c11] border border-[#1a1d2b] p-3.5 rounded-xl">
-                  <div class="flex items-center gap-3">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <!-- Sub-tabs: Client mods vs DiscoPanel server mods -->
+                    <button type="button" onclick="switchModSubTab('${s.id}', 'client')" id="modSubBtn_${s.id}_client" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white shadow-sm transition-all flex items-center gap-1.5">
+                      <i class="fa-solid fa-laptop text-xs"></i>
+                      <span>Клиентские моды</span>
+                      <span class="text-[10px] px-1.5 py-0.2 rounded bg-indigo-900/60 font-mono">${s.clientModsList.length}</span>
+                    </button>
+                    <button type="button" onclick="switchModSubTab('${s.id}', 'server')" id="modSubBtn_${s.id}_server" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-[#12141c] hover:bg-[#1a1d28] transition-all flex items-center gap-1.5">
+                      <i class="fa-solid fa-server text-xs text-purple-400"></i>
+                      <span>Моды с DiscoPanel</span>
+                      <span class="text-[10px] px-1.5 py-0.2 rounded bg-purple-950/80 text-purple-300 font-mono">${s.serverModsList.length}</span>
+                    </button>
                     <!-- Quick Mod Search -->
-                    <div class="relative w-full sm:w-64">
+                    <div class="relative w-full sm:w-48 ml-0 sm:ml-2">
                       <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs"></i>
-                      <input type="text" oninput="filterModRows('${s.id}', this.value)" placeholder="Search mods..." class="w-full bg-[#12141c] border border-slate-700/80 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-sans">
+                      <input type="text" oninput="filterModRows('${s.id}', this.value)" placeholder="Поиск модов..." class="w-full bg-[#12141c] border border-slate-700/80 rounded-lg pl-8 pr-3 py-1 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-sans">
                     </div>
                   </div>
 
@@ -1378,60 +1407,99 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
                     <input type="file" id="modFile_${s.id}" multiple accept=".jar" class="hidden" onchange="uploadClientMods('${s.id}', this.files)">
                     <button onclick="document.getElementById('modFile_${s.id}').click()" class="w-full sm:w-auto px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md">
                       <i class="fa-solid fa-plus text-xs"></i>
-                      <span>Upload client .jar</span>
+                      <span>Загрузить клиентский .jar</span>
                     </button>
                   </div>
                 </div>
 
-                <!-- Mods Table / List -->
-                ${s.modsList.length === 0 ? `
-                  <div class="p-8 text-center bg-[#0b0c11] border border-dashed border-[#1a1d2b] rounded-xl text-xs text-slate-500">
-                    No mod files (.jar) found. Click "Upload client .jar" or enable sync with DiscoPanel.
-                  </div>
-                ` : `
-                  <div class="bg-[#0b0c11] border border-[#1a1d2b] rounded-xl overflow-hidden">
-                    <div class="max-h-[380px] overflow-y-auto divide-y divide-[#151724]">
-                      ${s.modsList.map(m => `
-                        <div id="modRow_${s.id}_${encodeURIComponent(m.name)}" data-name="${m.name.toLowerCase()}" class="flex items-center justify-between p-3 hover:bg-[#121520] transition-colors gap-3">
-                          
-                          <!-- Switch + Name -->
-                          <div class="flex items-center gap-3 min-w-0">
-                            <!-- Toggle Switch -->
-                            <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                              <input type="checkbox" ${m.isEnabled ? 'checked' : ''} onchange="toggleMod('${s.id}', '${m.name}', this.checked)" class="sr-only peer">
-                              <div class="w-8 h-4 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3.5 after:transition-all peer-checked:bg-emerald-500"></div>
-                            </label>
+                <!-- SUB-PANE 1: CLIENT MODS -->
+                <div id="modSubPane_${s.id}_client" class="space-y-3">
+                  ${s.clientModsList.length === 0 ? `
+                    <div class="p-8 text-center bg-[#0b0c11] border border-dashed border-[#1a1d2b] rounded-xl text-xs text-slate-500">
+                      Нет активных клиентских модов. Загрузите .jar файл вручную или перейдите во вкладку «Моды с DiscoPanel» для импорта модов с сервера.
+                    </div>
+                  ` : `
+                    <div class="bg-[#0b0c11] border border-[#1a1d2b] rounded-xl overflow-hidden">
+                      <div class="max-h-[380px] overflow-y-auto divide-y divide-[#151724]">
+                        ${s.clientModsList.map(m => `
+                          <div id="modRow_${s.id}_${encodeURIComponent(m.name)}" data-name="${m.name.toLowerCase()}" class="flex items-center justify-between p-3 hover:bg-[#121520] transition-colors gap-3">
+                            <!-- Switch + Name -->
+                            <div class="flex items-center gap-3 min-w-0">
+                              <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                <input type="checkbox" ${m.isEnabled ? 'checked' : ''} onchange="toggleMod('${s.id}', '${m.name}', this.checked)" class="sr-only peer">
+                                <div class="w-8 h-4 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3.5 after:transition-all peer-checked:bg-emerald-500"></div>
+                              </label>
 
-                            <!-- Mod icon & Filename -->
-                            <div class="min-w-0">
-                              <div class="text-xs font-medium font-mono text-slate-200 truncate ${!m.isEnabled ? 'line-through text-slate-500' : ''}" id="modTitle_${s.id}_${encodeURIComponent(m.name)}">
-                                ${m.name}
-                              </div>
-                              <div class="text-[10px] text-slate-500 font-sans mt-0.5">
-                                ${m.sizeMb} MB &bull; ${m.isEnabled ? '<span class="text-emerald-400 font-semibold">Enabled</span>' : '<span class="text-slate-500">Disabled (not downloaded to players)</span>'}
+                              <div class="min-w-0">
+                                <div class="text-xs font-medium font-mono text-slate-200 truncate ${!m.isEnabled ? 'line-through text-slate-500' : ''}" id="modTitle_${s.id}_${encodeURIComponent(m.name)}">
+                                  ${m.name}
+                                </div>
+                                <div class="text-[10px] text-slate-500 font-sans mt-0.5">
+                                  ${m.sizeMb} MB &bull; ${m.isEnabled ? '<span class="text-emerald-400 font-semibold">Включен (скачивается игрокам)</span>' : '<span class="text-slate-500">Отключен</span>'}
+                                </div>
                               </div>
                             </div>
-                          </div>
 
-                          <!-- Badges & Delete -->
-                          <div class="flex items-center gap-2 shrink-0">
-                            ${m.isClient ? `
+                            <!-- Badges & Delete -->
+                            <div class="flex items-center gap-2 shrink-0">
                               <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Client-side</span>
-                            ` : m.isServerOnly ? `
-                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20" title="Чисто серверный мод (не скачивается игрокам)">Server-only</span>
-                            ` : `
-                              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">DiscoPanel</span>
-                            `}
-                            <button onclick="deleteMod('${s.id}', '${m.name}')" title="Delete mod" class="p-1 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors">
-                              <i class="fa-solid fa-trash-can text-xs"></i>
-                            </button>
+                              <button onclick="deleteMod('${s.id}', '${m.name}')" title="Удалить из клиентских модов" class="p-1.5 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors">
+                                <i class="fa-solid fa-trash-can text-xs"></i>
+                              </button>
+                            </div>
                           </div>
+                        `).join('')}
+                      </div>
+                    </div>
+                  `}
+                </div>
 
-                        </div>
-                      `).join('')}
+                <!-- SUB-PANE 2: DISCOPANEL SERVER MODS -->
+                <div id="modSubPane_${s.id}_server" class="hidden space-y-3">
+                  <div class="p-3 rounded-xl bg-purple-950/20 border border-purple-800/30 text-xs text-purple-200 flex items-start gap-2.5">
+                    <i class="fa-solid fa-circle-info text-purple-400 mt-0.5 shrink-0"></i>
+                    <div>
+                      <div class="font-bold text-white text-xs">Моды игрового сервера (DiscoPanel)</div>
+                      <div class="text-[11px] text-slate-400 mt-0.5">
+                        Эти моды установлены на самом сервере Minecraft. Игрокам в лаунчер они <b>НЕ скачиваются</b>.
+                        Если какой-то мод требуется и на клиенте (например, VoiceChat или Fabric API), нажмите кнопку <b>«Импортировать для игроков»</b>, чтобы перенести его в клиентские.
+                      </div>
                     </div>
                   </div>
-                `}
+
+                  ${s.serverModsList.length === 0 ? `
+                    <div class="p-8 text-center bg-[#0b0c11] border border-dashed border-[#1a1d2b] rounded-xl text-xs text-slate-500">
+                      Нет неимпортированных серверных модов. Все моды сервера уже добавлены в клиентские либо ещё не синхронизированы.
+                    </div>
+                  ` : `
+                    <div class="bg-[#0b0c11] border border-[#1a1d2b] rounded-xl overflow-hidden">
+                      <div class="max-h-[380px] overflow-y-auto divide-y divide-[#151724]">
+                        ${s.serverModsList.map(m => `
+                          <div id="modRow_${s.id}_${encodeURIComponent(m.name)}" data-name="${m.name.toLowerCase()}" class="flex items-center justify-between p-3 hover:bg-[#121520] transition-colors gap-3">
+                            <div class="flex items-center gap-3 min-w-0">
+                              <i class="fa-solid fa-server text-purple-400 text-xs shrink-0"></i>
+                              <div class="min-w-0">
+                                <div class="text-xs font-medium font-mono text-slate-200 truncate">
+                                  ${m.name}
+                                </div>
+                                <div class="text-[10px] text-slate-500 font-sans mt-0.5">
+                                  ${m.sizeMb} MB &bull; <span class="text-purple-400 font-semibold">Только сервер (DiscoPanel)</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div class="flex items-center gap-2 shrink-0">
+                              <button type="button" onclick="importDpMod('${s.id}', '${m.name}')" class="px-3 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm">
+                                <i class="fa-solid fa-plus text-xs"></i>
+                                <span>Импортировать для игроков</span>
+                              </button>
+                            </div>
+                          </div>
+                        `).join('')}
+                      </div>
+                    </div>
+                  `}
+                </div>
 
               </div>
 
@@ -2834,6 +2902,62 @@ adminApp.get('/admin', requireAdminAuth, async (req, res) => {
       } catch (err) { alert('Error: ' + err.message); }
     }
 
+    function switchModSubTab(serverId, subtab) {
+      const clientPane = document.getElementById('modSubPane_' + serverId + '_client');
+      const serverPane = document.getElementById('modSubPane_' + serverId + '_server');
+      const clientBtn = document.getElementById('modSubBtn_' + serverId + '_client');
+      const serverBtn = document.getElementById('modSubBtn_' + serverId + '_server');
+      if (clientPane && serverPane) {
+        if (subtab === 'client') {
+          clientPane.classList.remove('hidden');
+          serverPane.classList.add('hidden');
+          if (clientBtn) clientBtn.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white shadow-sm transition-all flex items-center gap-1.5";
+          if (serverBtn) serverBtn.className = "px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-[#12141c] hover:bg-[#1a1d28] transition-all flex items-center gap-1.5";
+        } else {
+          clientPane.classList.add('hidden');
+          serverPane.classList.remove('hidden');
+          if (serverBtn) serverBtn.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 text-white shadow-sm transition-all flex items-center gap-1.5";
+          if (clientBtn) clientBtn.className = "px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-[#12141c] hover:bg-[#1a1d28] transition-all flex items-center gap-1.5";
+        }
+      }
+    }
+
+    async function importDpMod(serverId, filename) {
+      try {
+        const res = await fetch('/api/admin/servers/' + serverId + '/import-dp-mod', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename })
+        });
+        const d = await res.json();
+        if (d.success) {
+          window.location.reload();
+        } else {
+          alert('Ошибка импорта мода: ' + (d.error || 'Ошибка'));
+        }
+      } catch (err) {
+        alert('Ошибка: ' + err.message);
+      }
+    }
+
+    function filterModRows(serverId, query) {
+      const q = (query || '').toLowerCase().trim();
+      const panes = ['client', 'server'];
+      panes.forEach(paneType => {
+        const pane = document.getElementById('modSubPane_' + serverId + '_' + paneType);
+        if (!pane) return;
+        const rows = pane.querySelectorAll('[id^="modRow_' + serverId + '_"]');
+        rows.forEach(r => {
+          const name = r.getAttribute('data-name') || '';
+          if (!q || name.includes(q)) {
+            r.classList.remove('hidden');
+          } else {
+            r.classList.add('hidden');
+          }
+        });
+      });
+    }
+
     function openCredentialsModal() {
       document.getElementById('credError').classList.add('hidden');
       document.getElementById('credSuccess').classList.add('hidden');
@@ -3051,8 +3175,7 @@ adminApp.post('/api/admin/servers/:id/upload-mod', requireAdminAuth, modUpload.a
   fs.writeFileSync(clientModsPath, JSON.stringify(clientMods, null, 2));
 
   // Update total_mods in DB
-  const modsDir = path.join(SERVERS_DIR, serverId, 'mods');
-  const count = fs.existsSync(modsDir) ? fs.readdirSync(modsDir).filter(f => f.endsWith('.jar')).length : 0;
+  const count = clientMods.length;
   db.prepare('UPDATE servers SET total_mods = ? WHERE id = ?').run(count, serverId);
 
   res.json({ success: true, count: files.length, files: addedNames });
@@ -3072,20 +3195,46 @@ adminApp.post('/api/admin/servers/:id/delete-mod', requireAdminAuth, (req, res) 
 
   // Remove from client_mods.json
   const clientModsPath = path.join(SERVERS_DIR, serverId, 'client_mods.json');
+  let clientMods = [];
   try {
     if (fs.existsSync(clientModsPath)) {
-      let clientMods = JSON.parse(fs.readFileSync(clientModsPath, 'utf8'));
+      clientMods = JSON.parse(fs.readFileSync(clientModsPath, 'utf8'));
       clientMods = clientMods.filter(n => n !== safeFilename);
       fs.writeFileSync(clientModsPath, JSON.stringify(clientMods, null, 2));
     }
   } catch (e) {}
 
   // Update total_mods in DB
-  const modsDir = path.join(SERVERS_DIR, serverId, 'mods');
-  const count = fs.existsSync(modsDir) ? fs.readdirSync(modsDir).filter(f => f.endsWith('.jar')).length : 0;
+  const count = clientMods.length;
   db.prepare('UPDATE servers SET total_mods = ? WHERE id = ?').run(count, serverId);
 
   res.json({ success: true });
+});
+
+// Import mod from DiscoPanel into client mods
+adminApp.post('/api/admin/servers/:id/import-dp-mod', requireAdminAuth, (req, res) => {
+  const serverId = req.params.id;
+  const { filename } = req.body;
+  if (!filename) return res.status(400).json({ success: false, error: 'Filename not specified' });
+
+  const safeFilename = path.basename(filename);
+  const clientModsPath = path.join(SERVERS_DIR, serverId, 'client_mods.json');
+  let clientMods = [];
+  try {
+    if (fs.existsSync(clientModsPath)) {
+      clientMods = JSON.parse(fs.readFileSync(clientModsPath, 'utf8'));
+    }
+  } catch (e) {}
+
+  if (!clientMods.includes(safeFilename)) {
+    clientMods.push(safeFilename);
+    fs.writeFileSync(clientModsPath, JSON.stringify(clientMods, null, 2));
+  }
+
+  // Update total_mods in DB
+  db.prepare('UPDATE servers SET total_mods = ? WHERE id = ?').run(clientMods.length, serverId);
+
+  res.json({ success: true, filename: safeFilename });
 });
 
 // Upload shaders (.zip)
